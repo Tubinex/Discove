@@ -39,6 +39,12 @@ if ($vcpkgToolchainPath -ne "") {
         $cmakeArgs += "-DVCPKG_TARGET_TRIPLET=$VcpkgTriplet"
     }
 
+    $overlayPath = Join-Path (Resolve-Path "..") "vcpkg-overlays"
+    if (Test-Path $overlayPath) {
+        Write-Host "Using vcpkg overlay ports: $overlayPath" -ForegroundColor Yellow
+        $cmakeArgs += "-DVCPKG_OVERLAY_PORTS=`"$overlayPath`""
+    }
+
     & cmake $cmakeArgs
 } else {
     Write-Host "vcpkg not found, configuring without it..." -ForegroundColor Yellow

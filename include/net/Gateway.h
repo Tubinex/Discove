@@ -19,8 +19,14 @@ class Gateway {
     using Json = nlohmann::json;
     using SubId = uint64_t;
 
+    enum class ConnectionState {
+        Disconnected,
+        Connected
+    };
+
     using AnyHandler = std::function<void(const Json &)>;
     using EventHandler = std::function<void(const Json &)>;
+    using ConnectionStateHandler = std::function<void(ConnectionState)>;
     using IdentityProvider = std::function<Json()>;
 
     struct Subscription {
@@ -78,13 +84,18 @@ class Gateway {
 
     Subscription subscribe(AnyHandler callback, bool ui = true);
     Subscription subscribe(const std::string &t, EventHandler callback, bool ui = true);
+    Subscription subscribeConnectionState(ConnectionStateHandler callback, bool ui = true);
     void unsubscribe(SubId id);
 
     bool isConnected() const { return m_connected.load(); }
+    ConnectionState getConnectionState() const {
+        return m_connected.load() ? ConnectionState::Connected : ConnectionState::Disconnected;
+    }
 
   private:
     void receive(const std::string &text);
     void dispatch(std::function<void()> fn);
+    void notifyConnectionState(ConnectionState state);
 
   private:
     struct AnySub {
@@ -94,6 +105,11 @@ class Gateway {
 
     struct EventSub {
         EventHandler callback;
+        bool ui = true;
+    };
+
+    struct ConnectionStateSub {
+        ConnectionStateHandler callback;
         bool ui = true;
     };
 
@@ -111,4 +127,5 @@ class Gateway {
 
     std::unordered_map<SubId, AnySub> m_subscriptions;
     std::unordered_map<std::string, std::unordered_map<SubId, EventSub>> m_eventSubscriptions;
+    std::unordered_map<SubId, ConnectionStateSub> m_connectionStateSubscriptions;
 };

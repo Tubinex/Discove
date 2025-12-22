@@ -1,0 +1,25 @@
+{
+  "name": "fltk",
+  "version": "1.4.4",
+  "description": "FLTK (Fast Light Toolkit) is a cross-platform C++ GUI toolkit",
+  "homepage": "https://www.fltk.org",
+  "license": "LGPL-2.0-only WITH FLTK-exception",
+  "dependencies": [
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
+    }
+  ],
+  "features": {
+    "opengl": {
+      "description": "Build with OpenGL support",
+      "dependencies": [
+        "opengl"
+      ]
+    }
+  }
+}

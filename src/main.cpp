@@ -19,11 +19,14 @@
 #include "net/Gateway.h"
 #include "router/Router.h"
 #include "screens/HomeScreen.h"
+#include "screens/LoadingScreen.h"
 #include "screens/LoginScreen.h"
 #include "screens/NotFoundScreen.h"
 #include "screens/ProfileScreen.h"
 #include "screens/SettingsScreen.h"
+#include "screens/UILibraryScreen.h"
 #include "state/Store.h"
+#include "ui/Theme.h"
 #include "utils/Logger.h"
 #include "utils/Secrets.h"
 
@@ -32,11 +35,15 @@ const int INITIAL_WINDOW_HEIGHT = 720;
 
 int main(int argc, char **argv) {
 
+    Fl::lock();
+
     Logger::setLevel(Logger::Level::DEBUG);
     Logger::info("Application started");
     Logger::debug("Debugging information");
     Logger::warn("This is a warning");
     Logger::error("This is an error message");
+
+    init_theme();
 
     auto token = Secrets::get("token");
     if (token.has_value()) {
@@ -52,6 +59,15 @@ int main(int argc, char **argv) {
     Gateway gateway;
     [[maybe_unused]] auto gatewayLogSub = gateway.subscribe(
         [](const Gateway::Json &message) { Logger::debug("Gateway message: " + message.dump(2)); }, false);
+
+    [[maybe_unused]] auto gatewayStateSub = gateway.subscribeConnectionState([](Gateway::ConnectionState state) {
+        if (state == Gateway::ConnectionState::Connected) {
+            Logger::info("Gateway connected!");
+        } else {
+            Logger::warn("Gateway disconnected!");
+        }
+    });
+
     if (!gateway.connect()) {
         Logger::error("Gateway connection failed");
     }
@@ -65,11 +81,15 @@ int main(int argc, char **argv) {
     window->add(&router);
 
     router.addRoute("/", [](int x, int y, int w, int h) { return std::make_unique<HomeScreen>(x, y, w, h); });
+    router.addRoute("/loading",
+                    [](int x, int y, int w, int h) { return std::make_unique<LoadingScreen>(x, y, w, h); });
     router.addRoute("/login", [](int x, int y, int w, int h) { return std::make_unique<LoginScreen>(x, y, w, h); });
     router.addRoute("/settings",
-                     [](int x, int y, int w, int h) { return std::make_unique<SettingsScreen>(x, y, w, h); });
+                    [](int x, int y, int w, int h) { return std::make_unique<SettingsScreen>(x, y, w, h); });
+    router.addRoute("/ui-library",
+                    [](int x, int y, int w, int h) { return std::make_unique<UILibraryScreen>(x, y, w, h); });
     router.addRoute("/user/:id",
-                     [](int x, int y, int w, int h) { return std::make_unique<ProfileScreen>(x, y, w, h); });
+                    [](int x, int y, int w, int h) { return std::make_unique<ProfileScreen>(x, y, w, h); });
     router.setNotFoundFactory([](int x, int y, int w, int h) { return std::make_unique<NotFoundScreen>(x, y, w, h); });
     router.start("/");
 

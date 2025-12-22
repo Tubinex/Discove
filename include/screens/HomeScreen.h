@@ -24,6 +24,8 @@ class HomeScreen : public Screen {
     Fl_Button *m_settingsBtn = nullptr;
     Fl_Button *m_loginBtn = nullptr;
     Fl_Button *m_profileBtn = nullptr;
+    Fl_Button *m_uiLibraryBtn = nullptr;
+    Fl_Button *m_loadingBtn = nullptr;
 
     Store::ListenerId m_counterSub;
 };
