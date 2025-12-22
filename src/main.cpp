@@ -89,6 +89,10 @@ int main(int argc, char **argv) {
         },
         true);
 
+    [[maybe_unused]] static auto readySupplementalSub = gateway.subscribe(
+        "READY_SUPPLEMENTAL", [](const Gateway::Json &message) { Logger::info("Received READY_SUPPLEMENTAL event"); },
+        true);
+
     [[maybe_unused]] static auto anySub = gateway.subscribe(
         [&router](const Gateway::Json &message) {
             if (message.contains("op") && message["op"].is_number() && message["op"].get<int>() == 9) {

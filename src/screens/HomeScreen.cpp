@@ -26,17 +26,11 @@ void HomeScreen::setupUI() {
     m_settingsBtn = new Fl_Button(w() / 2 - 75, 380, 150, 40, "Settings");
     m_settingsBtn->callback([](Fl_Widget *, void *) { Router::navigate("/settings"); });
 
-    m_loginBtn = new Fl_Button(w() / 2 - 75, 440, 150, 40, "Login");
-    m_loginBtn->callback([](Fl_Widget *, void *) { Router::navigate("/login"); });
-
     m_profileBtn = new Fl_Button(w() / 2 - 75, 500, 150, 40, "View Profile (User 42)");
     m_profileBtn->callback([](Fl_Widget *, void *) { Router::navigate("/user/42"); });
 
     m_uiLibraryBtn = new Fl_Button(w() / 2 - 75, 560, 150, 40, "UI Library");
     m_uiLibraryBtn->callback([](Fl_Widget *, void *) { Router::navigate("/ui-library"); });
-
-    m_loadingBtn = new Fl_Button(w() / 2 - 75, 620, 150, 40, "Loading Screen");
-    m_loadingBtn->callback([](Fl_Widget *, void *) { Router::navigate("/loading"); });
 
     end();
 }

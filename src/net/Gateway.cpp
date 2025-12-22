@@ -1,9 +1,14 @@
 #include "net/Gateway.h"
 
 #include "state/Store.h"
+#include "utils/Logger.h"
+#include "utils/Protobuf.h"
 
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <sstream>
 #include <utility>
 
 Gateway *Gateway::s_instance = nullptr;
@@ -77,6 +82,7 @@ void Gateway::disconnect() {
     if (m_shuttingDown.exchange(true))
         return;
 
+    stopHeartbeat();
     m_connected.store(false);
     notifyConnectionState(ConnectionState::Disconnected);
     m_ws.stop();
@@ -145,6 +151,23 @@ void Gateway::receive(const std::string &text) {
         return;
     }
 
+    auto seqIt = msg.find("s");
+    if (seqIt != msg.end() && seqIt->is_number()) {
+        m_lastSequence.store(seqIt->get<int>());
+    }
+
+    auto opIt = msg.find("op");
+    if (opIt != msg.end() && opIt->is_number()) {
+        int opcode = opIt->get<int>();
+        auto dataIt = msg.find("d");
+
+        if (opcode == 10 && dataIt != msg.end()) {
+            handleHello(*dataIt);
+        } else if (opcode == 11) {
+            Logger::debug("Received heartbeat ACK");
+        }
+    }
+
     auto it = msg.find("t");
     if (it != msg.end() && it->is_string()) {
         const std::string eventType = it->get<std::string>();
@@ -152,6 +175,8 @@ void Gateway::receive(const std::string &text) {
         if (dataIt != msg.end() && dataIt->is_object()) {
             if (eventType == "READY") {
                 handleReady(*dataIt);
+            } else if (eventType == "READY_SUPPLEMENTAL") {
+                handleReadySupplemental(*dataIt);
             } else if (eventType == "MESSAGE_CREATE") {
                 handleMessageCreate(*dataIt);
             }
@@ -247,6 +272,72 @@ void Gateway::setAppState(std::shared_ptr<AppState> state) { m_appState = std::m
 void Gateway::setDataStore(std::shared_ptr<DataStore> store) { m_dataStore = std::move(store); }
 
 void Gateway::handleReady(const Json &data) {
+    try {
+        std::filesystem::create_directories("discove");
+        std::ofstream file("discove/ready.json");
+        if (file.is_open()) {
+            file << data.dump(2);
+            file.close();
+            Logger::info("READY message written to discove/ready.json");
+        }
+    } catch (const std::exception &e) {
+        Logger::error(std::string("Failed to write READY message: ") + e.what());
+    }
+
+    if (data.contains("user_settings_proto") && data["user_settings_proto"].is_string()) {
+        const std::string base64Proto = data["user_settings_proto"].get<std::string>();
+
+        std::vector<ProtobufUtils::ParsedFolder> folders;
+        std::vector<uint64_t> positions;
+
+        if (ProtobufUtils::parseGuildFoldersProto(base64Proto, folders, positions)) {
+            Logger::info("Parsed " + std::to_string(folders.size()) + " guild folders and " +
+                         std::to_string(positions.size()) + " guild positions");
+
+            try {
+                std::ofstream folderFile("discove/guild_folders.txt");
+                if (folderFile.is_open()) {
+                    folderFile << "Guild Folders (" << folders.size() << "):\n";
+                    folderFile << "=====================================\n\n";
+
+                    for (size_t i = 0; i < folders.size(); ++i) {
+                        const auto &folder = folders[i];
+                        folderFile << "Folder #" << (i + 1) << ":\n";
+                        folderFile << "  ID: " << folder.id << "\n";
+                        folderFile << "  Name: " << (folder.name.empty() ? "(unnamed)" : folder.name) << "\n";
+
+                        if (folder.hasColor) {
+                            std::ostringstream colorHex;
+                            colorHex << "#" << std::hex << std::uppercase << folder.color;
+                            folderFile << "  Color: " << colorHex.str() << "\n";
+                        } else {
+                            folderFile << "  Color: (default)\n";
+                        }
+
+                        folderFile << "  Guild IDs (" << folder.guildIds.size() << "):\n";
+                        for (const auto &gid : folder.guildIds) {
+                            folderFile << "    - " << gid << "\n";
+                        }
+                        folderFile << "\n";
+                    }
+
+                    folderFile << "\nGuild Positions (" << positions.size() << "):\n";
+                    folderFile << "=====================================\n";
+                    for (size_t i = 0; i < positions.size(); ++i) {
+                        folderFile << i + 1 << ". " << positions[i] << "\n";
+                    }
+
+                    folderFile.close();
+                    Logger::info("Guild folder data written to discove/guild_folders.txt");
+                }
+            } catch (const std::exception &e) {
+                Logger::error(std::string("Failed to write guild folders: ") + e.what());
+            }
+        } else {
+            Logger::warn("Failed to parse user_settings_proto guild folders");
+        }
+    }
+
     ReadyState state;
     if (data.contains("session_id") && data["session_id"].is_string()) {
         state.sessionId = data["session_id"].get<std::string>();
@@ -334,6 +425,38 @@ void Gateway::handleReady(const Json &data) {
     }
 }
 
+void Gateway::handleReadySupplemental(const Json &data) {
+    try {
+        std::filesystem::create_directories("discove");
+        std::ofstream file("discove/ready_supplemental.json");
+        if (file.is_open()) {
+            file << data.dump(2);
+            file.close();
+            Logger::info("READY_SUPPLEMENTAL message written to discove/ready_supplemental.json");
+        }
+    } catch (const std::exception &e) {
+        Logger::error(std::string("Failed to write READY_SUPPLEMENTAL message: ") + e.what());
+    }
+
+    // READY_SUPPLEMENTAL contains additional data:
+    // - merged_presences: presence data for guild members
+    // - merged_members: additional member data for guilds
+    // - lazy_private_channels: private channel data
+    // - guilds: supplemental guild information
+
+    // TODO: When DataStore is implemented, process and store:
+    // - Merged presences for online status tracking
+    // - Merged members for member cache
+    // - Lazy private channels for DM support
+    // - Guild supplemental data
+
+    // For now, just log that we received it
+    if (data.contains("guilds") && data["guilds"].is_array()) {
+        const size_t guildCount = data["guilds"].size();
+        (void)guildCount;
+    }
+}
+
 void Gateway::handleMessageCreate(const Json &data) {
     // TODO: Store messages in DataStore
     std::string messageId;
@@ -398,4 +521,53 @@ void Gateway::handleMessageCreate(const Json &data) {
     // TODO: When DataStore is implemented, store the message:
     // m_dataStore->upsertUser(authorId, authorUsername, authorDiscriminator, isBot, authorGlobalName, authorAvatar);
     // m_dataStore->upsertMessage(messageId, channelId, authorId, content, timestampMs);
+}
+
+void Gateway::handleHello(const Json &data) {
+    if (data.contains("heartbeat_interval") && data["heartbeat_interval"].is_number()) {
+        int interval = data["heartbeat_interval"].get<int>();
+        Logger::info("Received HELLO with heartbeat interval: " + std::to_string(interval) + "ms");
+        startHeartbeat(interval);
+    }
+}
+
+static void heartbeatTimerCallback(void *userData) {
+    Gateway *gw = static_cast<Gateway *>(userData);
+    if (gw && gw->isConnected()) {
+        gw->sendHeartbeat();
+    }
+}
+
+void Gateway::startHeartbeat(int intervalMs) {
+    stopHeartbeat();
+    m_heartbeatInterval.store(intervalMs);
+    m_heartbeatRunning.store(true);
+
+    Fl::add_timeout(static_cast<double>(intervalMs) / 1000.0, heartbeatTimerCallback, this);
+    Logger::info("Started heartbeat with interval: " + std::to_string(intervalMs) + "ms");
+}
+
+void Gateway::sendHeartbeat() {
+    if (!m_heartbeatRunning.load() || !m_connected.load()) {
+        return;
+    }
+
+    Json heartbeat;
+    heartbeat["op"] = 1;
+    int seq = m_lastSequence.load();
+    heartbeat["d"] = (seq == -1) ? Json(nullptr) : Json(seq);
+
+    send(heartbeat);
+    Logger::debug("Sent heartbeat (seq: " + (seq == -1 ? std::string("null") : std::to_string(seq)) + ")");
+
+    int interval = m_heartbeatInterval.load();
+    if (interval > 0) {
+        Fl::add_timeout(static_cast<double>(interval) / 1000.0, heartbeatTimerCallback, this);
+    }
+}
+
+void Gateway::stopHeartbeat() {
+    m_heartbeatRunning.store(false);
+    Fl::remove_timeout(heartbeatTimerCallback, this);
+    Logger::debug("Stopped heartbeat");
 }

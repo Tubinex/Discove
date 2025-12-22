@@ -8,13 +8,7 @@
 #endif
 
 namespace Logger {
-enum class Level {
-    DEBUG = 0,
-    INFO = 1,
-    WARN = 2,
-    ERROR = 3,
-    NONE = 4
-};
+enum class Level { DEBUG = 0, INFO = 1, WARN = 2, ERROR = 3, NONE = 4 };
 
 void setLevel(Level level);
 Level getLevel();
@@ -25,4 +19,4 @@ void warn(const std::string &message);
 void error(const std::string &message);
 
 void log(Level level, const std::string &prefix, const std::string &message);
-}
+} // namespace Logger

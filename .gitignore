@@ -38,3 +38,6 @@ _deps/
 *.pdb
 *.ilk
 *.log
+
+# Discord data dumps
+discove/

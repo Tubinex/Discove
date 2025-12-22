@@ -1,8 +1,8 @@
 #pragma once
 
+#include "ui/RoundedWidget.h"
 #include <FL/Fl_Button.H>
 #include <FL/fl_draw.H>
-#include "ui/RoundedWidget.h"
 
 class RoundedButton : public RoundedWidget<Fl_Button> {
   public:

@@ -19,15 +19,16 @@
 class AppState;
 class DataStore;
 
+void heartbeatTimerCallback(void *userData);
+
 class Gateway {
+    friend void heartbeatTimerCallback(void *userData);
+
   public:
     using Json = nlohmann::json;
     using SubId = uint64_t;
 
-    enum class ConnectionState {
-        Disconnected,
-        Connected
-    };
+    enum class ConnectionState { Disconnected, Connected };
 
     struct ReadyState {
         std::string sessionId;
@@ -130,7 +131,13 @@ class Gateway {
     void notifyConnectionState(ConnectionState state);
 
     void handleReady(const Json &data);
+    void handleReadySupplemental(const Json &data);
     void handleMessageCreate(const Json &data);
+
+    void handleHello(const Json &data);
+    void startHeartbeat(int intervalMs);
+    void sendHeartbeat();
+    void stopHeartbeat();
 
   private:
     struct AnySub {
@@ -171,4 +178,9 @@ class Gateway {
     std::shared_ptr<DataStore> m_dataStore;
     std::optional<ReadyState> m_readyState;
     std::vector<GuildSummary> m_guilds;
+
+    // Heartbeat management
+    std::atomic<int> m_heartbeatInterval{0};
+    std::atomic<bool> m_heartbeatRunning{false};
+    std::atomic<int> m_lastSequence{-1};
 };
