@@ -1,7 +1,19 @@
 #include "net/Gateway.h"
 
+#include "state/Store.h"
+
+#include <chrono>
 #include <memory>
 #include <utility>
+
+Gateway *Gateway::s_instance = nullptr;
+
+Gateway &Gateway::get() {
+    if (!s_instance) {
+        s_instance = new Gateway();
+    }
+    return *s_instance;
+}
 
 Gateway::Gateway() {
     ix::initNetSystem();
@@ -133,6 +145,19 @@ void Gateway::receive(const std::string &text) {
         return;
     }
 
+    auto it = msg.find("t");
+    if (it != msg.end() && it->is_string()) {
+        const std::string eventType = it->get<std::string>();
+        auto dataIt = msg.find("d");
+        if (dataIt != msg.end() && dataIt->is_object()) {
+            if (eventType == "READY") {
+                handleReady(*dataIt);
+            } else if (eventType == "MESSAGE_CREATE") {
+                handleMessageCreate(*dataIt);
+            }
+        }
+    }
+
     std::vector<AnyHandler> anyUi;
     std::vector<AnyHandler> anyBg;
     std::vector<EventHandler> eventsUi;
@@ -215,4 +240,162 @@ void Gateway::notifyConnectionState(ConnectionState state) {
             }
         });
     }
+}
+
+void Gateway::setAppState(std::shared_ptr<AppState> state) { m_appState = std::move(state); }
+
+void Gateway::setDataStore(std::shared_ptr<DataStore> store) { m_dataStore = std::move(store); }
+
+void Gateway::handleReady(const Json &data) {
+    ReadyState state;
+    if (data.contains("session_id") && data["session_id"].is_string()) {
+        state.sessionId = data["session_id"].get<std::string>();
+    }
+
+    if (data.contains("user") && data["user"].is_object()) {
+        const auto &user = data["user"];
+
+        if (user.contains("id") && user["id"].is_string()) {
+            state.userId = user["id"].get<std::string>();
+        }
+
+        if (user.contains("username") && user["username"].is_string()) {
+            state.username = user["username"].get<std::string>();
+        }
+
+        if (user.contains("discriminator") && user["discriminator"].is_string()) {
+            state.discriminator = user["discriminator"].get<std::string>();
+        }
+
+        if (user.contains("global_name") && user["global_name"].is_string()) {
+            state.globalName = user["global_name"].get<std::string>();
+        }
+
+        if (user.contains("avatar") && user["avatar"].is_string()) {
+            state.avatar = user["avatar"].get<std::string>();
+        }
+    }
+
+    m_readyState = state;
+
+    // TODO: Update AppState when UserProfile support is added
+    // if (m_appState) {
+    //     AppState::UserProfile profile;
+    //     profile.id = state.userId;
+    //     profile.username = state.username;
+    //     profile.discriminator = state.discriminator;
+    //     profile.globalName = state.globalName;
+    //     profile.avatar = state.avatar;
+    //     m_appState->setSessionId(state.sessionId);
+    //     m_appState->setUserProfile(std::move(profile));
+    // }
+
+    m_guilds.clear();
+    if (data.contains("guilds") && data["guilds"].is_array()) {
+        for (const auto &guildJson : data["guilds"]) {
+            GuildSummary guild;
+
+            if (guildJson.contains("id") && guildJson["id"].is_string()) {
+                guild.id = guildJson["id"].get<std::string>();
+            }
+
+            if (guildJson.contains("properties") && guildJson["properties"].is_object()) {
+                const auto &props = guildJson["properties"];
+
+                if (props.contains("name") && props["name"].is_string()) {
+                    guild.name = props["name"].get<std::string>();
+                }
+
+                if (props.contains("icon") && props["icon"].is_string()) {
+                    guild.icon = props["icon"].get<std::string>();
+                }
+
+                if (props.contains("banner") && props["banner"].is_string()) {
+                    guild.banner = props["banner"].get<std::string>();
+                }
+            } else {
+                if (guildJson.contains("name") && guildJson["name"].is_string()) {
+                    guild.name = guildJson["name"].get<std::string>();
+                }
+
+                if (guildJson.contains("icon") && guildJson["icon"].is_string()) {
+                    guild.icon = guildJson["icon"].get<std::string>();
+                }
+
+                if (guildJson.contains("banner") && guildJson["banner"].is_string()) {
+                    guild.banner = guildJson["banner"].get<std::string>();
+                }
+            }
+
+            if (!guild.id.empty()) {
+                m_guilds.push_back(std::move(guild));
+            }
+        }
+    }
+}
+
+void Gateway::handleMessageCreate(const Json &data) {
+    // TODO: Store messages in DataStore
+    std::string messageId;
+    std::string channelId;
+    std::string content;
+    long long timestampMs = 0;
+
+    if (data.contains("id") && data["id"].is_string()) {
+        messageId = data["id"].get<std::string>();
+    }
+
+    if (data.contains("channel_id") && data["channel_id"].is_string()) {
+        channelId = data["channel_id"].get<std::string>();
+    }
+
+    if (data.contains("content") && data["content"].is_string()) {
+        content = data["content"].get<std::string>();
+    }
+
+    auto now = std::chrono::system_clock::now();
+    timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+
+    std::string authorId;
+    std::string authorUsername;
+    std::string authorDiscriminator;
+    std::string authorGlobalName;
+    std::string authorAvatar;
+    bool isBot = false;
+
+    if (data.contains("author") && data["author"].is_object()) {
+        const auto &author = data["author"];
+
+        if (author.contains("id") && author["id"].is_string()) {
+            authorId = author["id"].get<std::string>();
+        }
+
+        if (author.contains("username") && author["username"].is_string()) {
+            authorUsername = author["username"].get<std::string>();
+        }
+
+        if (author.contains("discriminator") && author["discriminator"].is_string()) {
+            authorDiscriminator = author["discriminator"].get<std::string>();
+        }
+
+        if (author.contains("global_name") && author["global_name"].is_string()) {
+            authorGlobalName = author["global_name"].get<std::string>();
+        }
+
+        if (author.contains("avatar") && author["avatar"].is_string()) {
+            authorAvatar = author["avatar"].get<std::string>();
+        }
+
+        if (author.contains("bot") && author["bot"].is_boolean()) {
+            isBot = author["bot"].get<bool>();
+        }
+    }
+
+    if (messageId.empty() || channelId.empty() || authorId.empty()) {
+        return;
+    }
+
+    // TODO: When DataStore is implemented, store the message:
+    // m_dataStore->upsertUser(authorId, authorUsername, authorDiscriminator, isBot, authorGlobalName, authorAvatar);
+    // m_dataStore->upsertMessage(messageId, channelId, authorId, content, timestampMs);
 }

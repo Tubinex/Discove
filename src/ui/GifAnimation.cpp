@@ -11,9 +11,9 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <gdiplus.h>
-#include <objidl.h>
 #include <windows.h>
+#include <objidl.h>
+#include <gdiplus.h>
 
 using namespace Gdiplus;
 

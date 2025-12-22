@@ -5,7 +5,9 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -13,6 +15,9 @@
 #include <ixwebsocket/IXNetSystem.h>
 #include <ixwebsocket/IXWebSocket.h>
 #include <nlohmann/json.hpp>
+
+class AppState;
+class DataStore;
 
 class Gateway {
   public:
@@ -22,6 +27,22 @@ class Gateway {
     enum class ConnectionState {
         Disconnected,
         Connected
+    };
+
+    struct ReadyState {
+        std::string sessionId;
+        std::string userId;
+        std::string username;
+        std::string discriminator;
+        std::string globalName;
+        std::string avatar;
+    };
+
+    struct GuildSummary {
+        std::string id;
+        std::string name;
+        std::string icon;
+        std::string banner;
     };
 
     using AnyHandler = std::function<void(const Json &)>;
@@ -68,6 +89,8 @@ class Gateway {
         std::string url = "wss://gateway.discord.gg/?v=10&encoding=json";
     };
 
+    static Gateway &get();
+
     Gateway();
     ~Gateway();
 
@@ -92,10 +115,22 @@ class Gateway {
         return m_connected.load() ? ConnectionState::Connected : ConnectionState::Disconnected;
     }
 
+    void setAppState(std::shared_ptr<AppState> state);
+    void setDataStore(std::shared_ptr<DataStore> store);
+
+    const std::optional<ReadyState> &getReadyState() const { return m_readyState; }
+    const std::vector<GuildSummary> &getGuilds() const { return m_guilds; }
+
+    void setAuthenticated(bool authenticated) { m_authenticated.store(authenticated); }
+    bool isAuthenticated() const { return m_authenticated.load(); }
+
   private:
     void receive(const std::string &text);
     void dispatch(std::function<void()> fn);
     void notifyConnectionState(ConnectionState state);
+
+    void handleReady(const Json &data);
+    void handleMessageCreate(const Json &data);
 
   private:
     struct AnySub {
@@ -113,11 +148,14 @@ class Gateway {
         bool ui = true;
     };
 
+    static Gateway *s_instance;
+
     Options m_options{};
     ix::WebSocket m_ws;
 
     std::atomic<bool> m_connected{false};
     std::atomic<bool> m_shuttingDown{false};
+    std::atomic<bool> m_authenticated{false};
 
     std::mutex m_identityMutex;
     IdentityProvider m_identityProvider;
@@ -128,4 +166,9 @@ class Gateway {
     std::unordered_map<SubId, AnySub> m_subscriptions;
     std::unordered_map<std::string, std::unordered_map<SubId, EventSub>> m_eventSubscriptions;
     std::unordered_map<SubId, ConnectionStateSub> m_connectionStateSubscriptions;
+
+    std::shared_ptr<AppState> m_appState;
+    std::shared_ptr<DataStore> m_dataStore;
+    std::optional<ReadyState> m_readyState;
+    std::vector<GuildSummary> m_guilds;
 };

@@ -16,12 +16,11 @@ class LoginScreen : public Screen {
 
   private:
     void setupUI();
+    void onLoginClicked();
 
     Fl_Box *m_titleLabel = nullptr;
-    Fl_Box *m_usernameLabel = nullptr;
-    Fl_Input *m_usernameInput = nullptr;
-    Fl_Box *m_passwordLabel = nullptr;
-    Fl_Input *m_passwordInput = nullptr;
+    Fl_Box *m_tokenLabel = nullptr;
+    Fl_Input *m_tokenInput = nullptr;
     Fl_Button *m_loginBtn = nullptr;
-    Fl_Button *m_backBtn = nullptr;
+    Fl_Box *m_errorLabel = nullptr;
 };
