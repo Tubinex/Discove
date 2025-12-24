@@ -12,7 +12,7 @@
 #include <FL/Fl.H>
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Button.H>
-#include <FL/Fl_Window.H>
+#include <FL/Fl_Double_Window.H>
 
 #include <string>
 
@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
 
     init_theme();
 
-    Fl_Window *window = new Fl_Window(INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT, "Discove");
+    Fl_Double_Window *window = new Fl_Double_Window(INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT, "Discove");
 
     Router &router = Router::get();
     router.resize(0, 0, window->w(), window->h());
@@ -63,9 +63,6 @@ int main(int argc, char **argv) {
     router.setNotFoundFactory([](int x, int y, int w, int h) { return std::make_unique<NotFoundScreen>(x, y, w, h); });
 
     Gateway &gateway = Gateway::get();
-    [[maybe_unused]] static auto gatewayLogSub = gateway.subscribe(
-        [](const Gateway::Json &message) { Logger::debug("Gateway message: " + message.dump(2)); }, false);
-
     [[maybe_unused]] static auto gatewayStateSub =
         gateway.subscribeConnectionState([&router, &gateway](Gateway::ConnectionState state) {
             if (state == Gateway::ConnectionState::Connected) {

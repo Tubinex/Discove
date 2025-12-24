@@ -2,8 +2,9 @@
 
 #include "router/Screen.h"
 #include "state/Store.h"
-#include <FL/Fl_Box.H>
-#include <FL/Fl_Button.H>
+#include "ui/components/GuildBar.h"
+#include "ui/components/ProfileBubble.h"
+#include "ui/components/Sidebar.h"
 
 class HomeScreen : public Screen {
   public:
@@ -14,16 +15,17 @@ class HomeScreen : public Screen {
     void onEnter(const Context &ctx) override;
     void onTransitionIn(float progress) override;
     void onTransitionOut(float progress) override;
+    void resize(int x, int y, int w, int h) override;
+    void draw() override;
 
   private:
     void setupUI();
-    void onCounterChange(int newCounter);
 
-    Fl_Box *m_counterLabel = nullptr;
-    Fl_Button *m_incrementBtn = nullptr;
-    Fl_Button *m_settingsBtn = nullptr;
-    Fl_Button *m_profileBtn = nullptr;
-    Fl_Button *m_uiLibraryBtn = nullptr;
+    static constexpr int GUILD_BAR_WIDTH = 72;
+    static constexpr int SIDEBAR_WIDTH = 304;
+    static constexpr int PROFILE_HEIGHT = 80;
 
-    Store::ListenerId m_counterSub;
+    GuildBar *m_guildBar = nullptr;
+    Sidebar *m_sidebar = nullptr;
+    ProfileBubble *m_profileBubble = nullptr;
 };

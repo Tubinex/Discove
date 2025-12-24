@@ -1,52 +1,70 @@
 #include "screens/HomeScreen.h"
 #include "router/Router.h"
 #include "state/AppState.h"
+#include "ui/Theme.h"
 #include "utils/Logger.h"
 
-HomeScreen::HomeScreen(int x, int y, int w, int h) : Screen(x, y, w, h, "Home"), m_counterSub(0) { setupUI(); }
+#include <FL/fl_draw.H>
 
-HomeScreen::~HomeScreen() {
-    if (m_counterSub) {
-        Store::get().unsubscribe(m_counterSub);
-    }
-}
+HomeScreen::HomeScreen(int x, int y, int w, int h) : Screen(x, y, w, h, "Home") { setupUI(); }
+
+HomeScreen::~HomeScreen() {}
 
 void HomeScreen::setupUI() {
     begin();
 
-    m_counterLabel = new Fl_Box(w() / 2 - 100, 200, 200, 100, "Counter: 0");
-    m_counterLabel->labelsize(32);
-    m_counterLabel->labelfont(FL_BOLD);
+    m_guildBar = new GuildBar(0, 0, GUILD_BAR_WIDTH, h() - PROFILE_HEIGHT);
+    m_sidebar = new Sidebar(GUILD_BAR_WIDTH, 0, SIDEBAR_WIDTH, h() - PROFILE_HEIGHT);
 
-    m_incrementBtn = new Fl_Button(w() / 2 - 75, 320, 150, 40, "Increment");
-    m_incrementBtn->callback([](Fl_Widget *, void *) {
-        Store::get().update([](AppState &state) { state.counter++; });
-    });
+    m_profileBubble = new ProfileBubble(0, h() - PROFILE_HEIGHT, GUILD_BAR_WIDTH + SIDEBAR_WIDTH, PROFILE_HEIGHT);
 
-    m_settingsBtn = new Fl_Button(w() / 2 - 75, 380, 150, 40, "Settings");
-    m_settingsBtn->callback([](Fl_Widget *, void *) { Router::navigate("/settings"); });
+    m_guildBar->addGuild("1", "", "Test Server 1");
+    m_guildBar->addGuild("2", "", "Another Server");
+    m_guildBar->addGuild("3", "", "Cool Guild");
+    m_guildBar->setSelectedGuild("1");
 
-    m_profileBtn = new Fl_Button(w() / 2 - 75, 500, 150, 40, "View Profile (User 42)");
-    m_profileBtn->callback([](Fl_Widget *, void *) { Router::navigate("/user/42"); });
+    m_sidebar->setGuild("1", "Test Server 1");
+    m_sidebar->addTextChannel("100", "general");
+    m_sidebar->addTextChannel("101", "random");
+    m_sidebar->addTextChannel("102", "memes");
+    m_sidebar->addVoiceChannel("200", "General Voice");
+    m_sidebar->addVoiceChannel("201", "Gaming");
+    m_sidebar->setSelectedChannel("100");
 
-    m_uiLibraryBtn = new Fl_Button(w() / 2 - 75, 560, 150, 40, "UI Library");
-    m_uiLibraryBtn->callback([](Fl_Widget *, void *) { Router::navigate("/ui-library"); });
+    m_profileBubble->setUser("123", "TestUser", "", "1234");
+    m_profileBubble->setStatus("online");
 
     end();
 }
 
-void HomeScreen::onCreate(const Context &ctx) {
-    m_counterSub = Store::get().subscribe<int>(
-        [](const AppState &state) { return state.counter; },
-        [this](int counter) { onCounterChange(counter); }, std::equal_to<int>{}, true);
-}
+void HomeScreen::onCreate(const Context &ctx) {}
 
 void HomeScreen::onEnter(const Context &ctx) {}
 
-void HomeScreen::onCounterChange(int newCounter) {
-    std::string label = "Counter: " + std::to_string(newCounter);
-    m_counterLabel->copy_label(label.c_str());
-    m_counterLabel->redraw();
+void HomeScreen::resize(int x, int y, int w, int h) {
+    Screen::resize(x, y, w, h);
+
+    if (m_guildBar) {
+        m_guildBar->resize(0, 0, GUILD_BAR_WIDTH, h - PROFILE_HEIGHT);
+    }
+    if (m_sidebar) {
+        m_sidebar->resize(GUILD_BAR_WIDTH, 0, SIDEBAR_WIDTH, h - PROFILE_HEIGHT);
+    }
+    if (m_profileBubble) {
+        m_profileBubble->resize(0, h - PROFILE_HEIGHT, GUILD_BAR_WIDTH + SIDEBAR_WIDTH, PROFILE_HEIGHT);
+    }
+}
+
+void HomeScreen::draw() {
+    int gapY = h() - PROFILE_HEIGHT;
+
+    fl_color(ThemeColors::BG_PRIMARY);
+    fl_rectf(0, gapY, GUILD_BAR_WIDTH, PROFILE_HEIGHT);
+
+    fl_color(ThemeColors::BG_SECONDARY);
+    fl_rectf(GUILD_BAR_WIDTH, gapY, SIDEBAR_WIDTH, PROFILE_HEIGHT);
+
+    Screen::draw();
 }
 
 void HomeScreen::onTransitionIn(float progress) {
