@@ -1,12 +1,16 @@
 #pragma once
 
+#include <FL/Fl_RGB_Image.H>
 #include <FL/Fl_Widget.H>
 #include <functional>
+#include <memory>
 #include <string>
+#include <vector>
 
 class ProfileBubble : public Fl_Widget {
   public:
     ProfileBubble(int x, int y, int w, int h, const char *label = nullptr);
+    ~ProfileBubble();
 
     void draw() override;
     int handle(int event) override;
@@ -57,16 +61,28 @@ class ProfileBubble : public Fl_Widget {
 
     int m_hoveredButton = -1;
 
+    Fl_RGB_Image *m_avatarImage = nullptr;
+    Fl_RGB_Image *m_circularAvatar = nullptr;
+
+    std::vector<std::unique_ptr<Fl_RGB_Image>> m_circularFrames;
+    std::vector<int> m_frameDelays;
+    size_t m_currentFrame = 0;
+    bool m_isAnimated = false;
+
     std::function<void()> m_onSettingsClicked;
     std::function<void()> m_onMicrophoneClicked;
     std::function<void()> m_onHeadphonesClicked;
 
-    static constexpr int AVATAR_SIZE = 32;
+    static constexpr int AVATAR_SIZE = 34;
     static constexpr int STATUS_DOT_SIZE = 10;
+    static constexpr int STATUS_DOT_BORDER_WIDTH = 3;
     static constexpr int BUTTON_SIZE = 32;
 
     void drawAvatar(int avatarX, int avatarY);
     void drawStatusDot(int dotX, int dotY);
     void drawButton(int btnX, int btnY, const char *icon, bool hovered, bool active);
     int getButtonAt(int mx, int my) const;
+    void loadAvatar();
+    void advanceFrame();
+    static void animationTimerCallback(void *userdata);
 };

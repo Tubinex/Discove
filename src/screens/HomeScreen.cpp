@@ -6,9 +6,16 @@
 
 #include <FL/fl_draw.H>
 
-HomeScreen::HomeScreen(int x, int y, int w, int h) : Screen(x, y, w, h, "Home") { setupUI(); }
+HomeScreen::HomeScreen(int x, int y, int w, int h) : Screen(x, y, w, h, "Home") {
+    setupUI();
+    subscribeToStore();
+}
 
-HomeScreen::~HomeScreen() {}
+HomeScreen::~HomeScreen() {
+    if (m_userProfileListenerId != 0) {
+        Store::get().unsubscribe(m_userProfileListenerId);
+    }
+}
 
 void HomeScreen::setupUI() {
     begin();
@@ -31,10 +38,27 @@ void HomeScreen::setupUI() {
     m_sidebar->addVoiceChannel("201", "Gaming");
     m_sidebar->setSelectedChannel("100");
 
+    // Default user data (will be overwritten by store subscription)
     m_profileBubble->setUser("123", "TestUser", "", "1234");
     m_profileBubble->setStatus("online");
 
     end();
+}
+
+void HomeScreen::subscribeToStore() {
+    // Subscribe to user profile changes
+    m_userProfileListenerId = Store::get().subscribe<std::optional<UserProfile>>(
+        [](const AppState &state) { return state.currentUser; },
+        [this](const std::optional<UserProfile> &profile) {
+            if (profile.has_value() && m_profileBubble) {
+                const auto &user = profile.value();
+                std::string displayName = !user.globalName.empty() ? user.globalName : user.username;
+                m_profileBubble->setUser(user.id, displayName, user.avatarUrl, user.discriminator);
+                m_profileBubble->setStatus(user.status);
+            }
+        },
+        std::equal_to<std::optional<UserProfile>>{}, true // Fire immediately
+    );
 }
 
 void HomeScreen::onCreate(const Context &ctx) {}

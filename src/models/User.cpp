@@ -24,6 +24,36 @@ User User::fromJson(const nlohmann::json &j) {
         }
     }
 
+    if (j.contains("collectibles") && !j["collectibles"].is_null()) {
+        const auto &collectibles = j["collectibles"];
+        if (collectibles.contains("nameplate") && !collectibles["nameplate"].is_null()) {
+            const auto &nameplateData = collectibles["nameplate"];
+            Nameplate nameplate;
+
+            if (nameplateData.contains("asset")) {
+                nameplate.asset = nameplateData["asset"].get<std::string>();
+            }
+
+            if (nameplateData.contains("expires_at") && !nameplateData["expires_at"].is_null()) {
+                nameplate.expiresAt = nameplateData["expires_at"].get<std::string>();
+            }
+
+            if (nameplateData.contains("label") && !nameplateData["label"].is_null()) {
+                nameplate.label = nameplateData["label"].get<std::string>();
+            }
+
+            if (nameplateData.contains("palette") && !nameplateData["palette"].is_null()) {
+                nameplate.palette = nameplateData["palette"].get<std::string>();
+            }
+
+            if (nameplateData.contains("sku_id") && !nameplateData["sku_id"].is_null()) {
+                nameplate.skuId = nameplateData["sku_id"].get<std::string>();
+            }
+
+            user.nameplate = nameplate;
+        }
+    }
+
     if (j.contains("banner") && !j["banner"].is_null()) {
         user.banner = j["banner"].get<std::string>();
     }
@@ -77,4 +107,25 @@ std::string User::getDefaultAvatarUrl() const {
         return CDNUtils::getDefaultAvatarUrl(id);
     }
     return CDNUtils::getDefaultAvatarUrlLegacy(discriminator);
+}
+
+std::string User::getAvatarDecorationUrl() const {
+    if (avatarDecoration.has_value()) {
+        return CDNUtils::getAvatarDecorationUrl(*avatarDecoration);
+    }
+    return "";
+}
+
+std::string User::getNameplateUrl(int size) const {
+    if (nameplate.has_value() && !nameplate->asset.empty()) {
+        return CDNUtils::getNameplateUrl(nameplate->asset, size);
+    }
+    return "";
+}
+
+std::string User::getNameplateAnimatedUrl() const {
+    if (nameplate.has_value() && !nameplate->asset.empty()) {
+        return CDNUtils::getNameplateAnimatedUrl(nameplate->asset);
+    }
+    return "";
 }

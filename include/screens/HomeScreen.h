@@ -20,12 +20,15 @@ class HomeScreen : public Screen {
 
   private:
     void setupUI();
+    void subscribeToStore();
 
     static constexpr int GUILD_BAR_WIDTH = 72;
-    static constexpr int SIDEBAR_WIDTH = 304;
-    static constexpr int PROFILE_HEIGHT = 80;
+    static constexpr int SIDEBAR_WIDTH = 302;
+    static constexpr int PROFILE_HEIGHT = 74;
 
     GuildBar *m_guildBar = nullptr;
     Sidebar *m_sidebar = nullptr;
     ProfileBubble *m_profileBubble = nullptr;
+
+    Store::ListenerId m_userProfileListenerId = 0;
 };

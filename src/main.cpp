@@ -27,6 +27,7 @@
 #include "screens/UILibraryScreen.h"
 #include "state/Store.h"
 #include "ui/Theme.h"
+#include "utils/Fonts.h"
 #include "utils/Logger.h"
 #include "utils/Secrets.h"
 #include "utils/Uuid.h"
@@ -42,6 +43,11 @@ int main(int argc, char **argv) {
     Logger::info("Application started");
 
     init_theme();
+
+    // Load custom fonts
+    if (!FontLoader::loadFonts()) {
+        Logger::warn("Some fonts failed to load, using fallback fonts");
+    }
 
     Fl_Double_Window *window = new Fl_Double_Window(INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT, "Discove");
 
@@ -80,9 +86,15 @@ int main(int argc, char **argv) {
     [[maybe_unused]] static auto readySub = gateway.subscribe(
         "READY",
         [&router, &gateway](const Gateway::Json &message) {
-            Logger::info("Authentication successful! Received READY event");
+            bool wasAuthenticated = gateway.isAuthenticated();
             gateway.setAuthenticated(true);
-            router.navigate("/");
+
+            if (wasAuthenticated) {
+                Logger::info("Session reconnected - received fresh READY event");
+            } else {
+                Logger::info("Authentication successful! Received READY event");
+                router.navigate("/");
+            }
         },
         true);
 
@@ -91,11 +103,13 @@ int main(int argc, char **argv) {
         true);
 
     [[maybe_unused]] static auto anySub = gateway.subscribe(
-        [&router](const Gateway::Json &message) {
+        [&router, &gateway](const Gateway::Json &message) {
             if (message.contains("op") && message["op"].is_number() && message["op"].get<int>() == 9) {
-                Logger::error("Authentication failed: Invalid session");
-                Secrets::set("token", "");
-                router.navigate("/login");
+                if (!gateway.isAuthenticated()) {
+                    Logger::error("Authentication failed: Invalid session");
+                    Secrets::set("token", "");
+                    router.navigate("/login");
+                }
             }
         },
         true);

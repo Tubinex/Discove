@@ -1,10 +1,13 @@
 #include "net/Gateway.h"
 
+#include "models/User.h"
 #include "state/Store.h"
+#include "utils/CDN.h"
 #include "utils/Logger.h"
 #include "utils/Protobuf.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -47,16 +50,7 @@ bool Gateway::connect(const Options &opt) {
         case ix::WebSocketMessageType::Open:
             m_connected.store(true);
             notifyConnectionState(ConnectionState::Connected);
-            {
-                IdentityProvider IdentityProvider;
-                {
-                    std::scoped_lock lock(m_identityMutex);
-                    IdentityProvider = m_identityProvider;
-                }
-                if (IdentityProvider) {
-                    send(IdentityProvider());
-                }
-            }
+            // Identity/Resume will be sent after receiving HELLO
             break;
 
         case ix::WebSocketMessageType::Message:
@@ -162,9 +156,20 @@ void Gateway::receive(const std::string &text) {
         auto dataIt = msg.find("d");
 
         if (opcode == 10 && dataIt != msg.end()) {
+            // HELLO
             handleHello(*dataIt);
         } else if (opcode == 11) {
+            // HEARTBEAT_ACK
+            m_heartbeatAcked.store(true);
             Logger::debug("Received heartbeat ACK");
+        } else if (opcode == 7) {
+            // RECONNECT
+            Logger::warn("Received RECONNECT opcode from Discord");
+            handleReconnect(dataIt != msg.end() ? *dataIt : Json::object());
+        } else if (opcode == 9 && dataIt != msg.end()) {
+            // INVALID_SESSION
+            Logger::warn("Received INVALID_SESSION opcode from Discord");
+            handleInvalidSession(*dataIt);
         }
     }
 
@@ -179,6 +184,8 @@ void Gateway::receive(const std::string &text) {
                 handleReadySupplemental(*dataIt);
             } else if (eventType == "MESSAGE_CREATE") {
                 handleMessageCreate(*dataIt);
+            } else if (eventType == "RESUMED") {
+                Logger::info("Session successfully resumed");
             }
         }
     }
@@ -341,6 +348,19 @@ void Gateway::handleReady(const Json &data) {
     ReadyState state;
     if (data.contains("session_id") && data["session_id"].is_string()) {
         state.sessionId = data["session_id"].get<std::string>();
+
+        // Store session_id for resuming
+        {
+            std::scoped_lock lock(m_sessionMutex);
+            m_sessionId = state.sessionId;
+        }
+    }
+
+    // Store resume_gateway_url if provided
+    if (data.contains("resume_gateway_url") && data["resume_gateway_url"].is_string()) {
+        std::scoped_lock lock(m_sessionMutex);
+        m_resumeGatewayUrl = data["resume_gateway_url"].get<std::string>();
+        Logger::info("Stored resume gateway URL: " + m_resumeGatewayUrl);
     }
 
     if (data.contains("user") && data["user"].is_object()) {
@@ -369,17 +389,24 @@ void Gateway::handleReady(const Json &data) {
 
     m_readyState = state;
 
-    // TODO: Update AppState when UserProfile support is added
-    // if (m_appState) {
-    //     AppState::UserProfile profile;
-    //     profile.id = state.userId;
-    //     profile.username = state.username;
-    //     profile.discriminator = state.discriminator;
-    //     profile.globalName = state.globalName;
-    //     profile.avatar = state.avatar;
-    //     m_appState->setSessionId(state.sessionId);
-    //     m_appState->setUserProfile(std::move(profile));
-    // }
+    // Update Store with user profile
+    Store::get().update([&state](AppState &appState) {
+        UserProfile profile;
+        profile.id = state.userId;
+        profile.username = state.username;
+        profile.discriminator = state.discriminator;
+        profile.globalName = state.globalName;
+        profile.avatarHash = state.avatar;
+
+        // Generate avatar URL using CDN utils
+        if (!state.avatar.empty()) {
+            profile.avatarUrl = CDNUtils::getUserAvatarUrl(state.userId, state.avatar);
+        } else {
+            profile.avatarUrl = CDNUtils::getDefaultAvatarUrl(state.userId);
+        }
+
+        appState.currentUser = std::move(profile);
+    });
 
     m_guilds.clear();
     if (data.contains("guilds") && data["guilds"].is_array()) {
@@ -422,6 +449,45 @@ void Gateway::handleReady(const Json &data) {
                 m_guilds.push_back(std::move(guild));
             }
         }
+    }
+
+    // Log collectibles from users array
+    if (data.contains("users") && data["users"].is_array()) {
+        Logger::info("Processing " + std::to_string(data["users"].size()) + " users for collectibles");
+
+        size_t userCount = 0;
+        size_t avatarDecorationCount = 0;
+        size_t nameplateCount = 0;
+
+        for (const auto &userJson : data["users"]) {
+            try {
+                User user = User::fromJson(userJson);
+                userCount++;
+
+                std::string username = user.getDisplayName();
+                if (username.empty()) {
+                    username = user.username;
+                }
+
+                // Count avatar decorations
+                std::string decorationUrl = user.getAvatarDecorationUrl();
+                if (!decorationUrl.empty()) {
+                    avatarDecorationCount++;
+                }
+
+                // Count nameplates
+                std::string nameplateUrl = user.getNameplateUrl();
+                if (!nameplateUrl.empty()) {
+                    nameplateCount++;
+                }
+            } catch (const std::exception &e) {
+                Logger::warn("Failed to parse user for collectibles: " + std::string(e.what()));
+            }
+        }
+
+        Logger::info("Collectibles summary: " + std::to_string(avatarDecorationCount) +
+                     " avatar decorations, " + std::to_string(nameplateCount) + " nameplates from " +
+                     std::to_string(userCount) + " users");
     }
 }
 
@@ -529,6 +595,50 @@ void Gateway::handleHello(const Json &data) {
         Logger::info("Received HELLO with heartbeat interval: " + std::to_string(interval) + "ms");
         startHeartbeat(interval);
     }
+
+    // Check if we can resume the session
+    std::string sessionId;
+    int lastSeq = m_lastSequence.load();
+    {
+        std::scoped_lock lock(m_sessionMutex);
+        sessionId = m_sessionId;
+    }
+
+    if (!sessionId.empty() && lastSeq > 0) {
+        // Send RESUME (opcode 6)
+        Json resume;
+        resume["op"] = 6;
+        resume["d"] = {{"token", ""}, {"session_id", sessionId}, {"seq", lastSeq}};
+
+        // Get token from identity provider
+        IdentityProvider identityProvider;
+        {
+            std::scoped_lock lock(m_identityMutex);
+            identityProvider = m_identityProvider;
+        }
+
+        if (identityProvider) {
+            Json identifyPayload = identityProvider();
+            if (identifyPayload.contains("d") && identifyPayload["d"].contains("token")) {
+                resume["d"]["token"] = identifyPayload["d"]["token"];
+            }
+        }
+
+        send(resume);
+        Logger::info("Sent RESUME (session_id: " + sessionId + ", seq: " + std::to_string(lastSeq) + ")");
+    } else {
+        // Send IDENTIFY (opcode 2)
+        IdentityProvider identityProvider;
+        {
+            std::scoped_lock lock(m_identityMutex);
+            identityProvider = m_identityProvider;
+        }
+
+        if (identityProvider) {
+            send(identityProvider());
+            Logger::info("Sent IDENTIFY");
+        }
+    }
 }
 
 static void heartbeatTimerCallback(void *userData) {
@@ -542,6 +652,7 @@ void Gateway::startHeartbeat(int intervalMs) {
     stopHeartbeat();
     m_heartbeatInterval.store(intervalMs);
     m_heartbeatRunning.store(true);
+    m_heartbeatAcked.store(true); // Reset ACK flag for new session
 
     Fl::add_timeout(static_cast<double>(intervalMs) / 1000.0, heartbeatTimerCallback, this);
     Logger::info("Started heartbeat with interval: " + std::to_string(intervalMs) + "ms");
@@ -551,6 +662,16 @@ void Gateway::sendHeartbeat() {
     if (!m_heartbeatRunning.load() || !m_connected.load()) {
         return;
     }
+
+    // Check if previous heartbeat was acknowledged
+    if (!m_heartbeatAcked.load()) {
+        Logger::warn("Heartbeat ACK not received - connection may be zombied, reconnecting");
+        dispatch([this]() { reconnect(true); });
+        return;
+    }
+
+    // Mark as waiting for ACK
+    m_heartbeatAcked.store(false);
 
     Json heartbeat;
     heartbeat["op"] = 1;
@@ -570,4 +691,108 @@ void Gateway::stopHeartbeat() {
     m_heartbeatRunning.store(false);
     Fl::remove_timeout(heartbeatTimerCallback, this);
     Logger::debug("Stopped heartbeat");
+}
+
+void Gateway::handleReconnect(const Json &data) {
+    Logger::warn("Discord requested reconnect - attempting to resume session");
+    // Discord wants us to reconnect and resume the session
+    // We should close the connection and reconnect with resume
+    dispatch([this]() { reconnect(true); });
+}
+
+void Gateway::handleInvalidSession(const Json &data) {
+    bool canResume = false;
+    if (data.is_boolean()) {
+        canResume = data.get<bool>();
+    }
+
+    if (canResume) {
+        Logger::warn("Session invalid but resumable - reconnecting with resume");
+        // Wait a bit before reconnecting as per Discord recommendations
+        dispatch([this]() {
+            Fl::add_timeout(
+                1.0 + (std::rand() % 5),
+                [](void *userData) {
+                    Gateway *gw = static_cast<Gateway *>(userData);
+                    if (gw) {
+                        gw->reconnect(true);
+                    }
+                },
+                this);
+        });
+    } else {
+        Logger::warn("Session invalid and not resumable - clearing session and reconnecting");
+        // Clear session data and reconnect with fresh IDENTIFY
+        {
+            std::scoped_lock lock(m_sessionMutex);
+            m_sessionId.clear();
+            m_resumeGatewayUrl.clear();
+        }
+        m_lastSequence.store(-1);
+
+        dispatch([this]() {
+            Fl::add_timeout(
+                1.0 + (std::rand() % 5),
+                [](void *userData) {
+                    Gateway *gw = static_cast<Gateway *>(userData);
+                    if (gw) {
+                        gw->reconnect(false);
+                    }
+                },
+                this);
+        });
+    }
+}
+
+void Gateway::reconnect(bool resume) {
+    if (m_shuttingDown.load()) {
+        return;
+    }
+
+    Logger::info("Reconnecting to gateway" + std::string(resume ? " (resume)" : " (fresh)"));
+
+    // Stop current connection
+    stopHeartbeat();
+    m_connected.store(false);
+
+    // If not resuming, clear session data
+    if (!resume) {
+        std::scoped_lock lock(m_sessionMutex);
+        m_sessionId.clear();
+        m_resumeGatewayUrl.clear();
+        m_lastSequence.store(-1);
+    }
+
+    // Get the URL to connect to
+    std::string url;
+    {
+        std::scoped_lock lock(m_sessionMutex);
+        url = resume ? m_resumeGatewayUrl : "";
+    }
+
+    if (url.empty()) {
+        url = m_options.url;
+    }
+
+    // Stop the websocket and wait a bit before reconnecting
+    m_ws.stop();
+
+    // Schedule reconnection after a brief delay to ensure clean disconnect
+    dispatch([this, url]() {
+        Fl::add_timeout(
+            0.5, // Wait 500ms for clean disconnect
+            [](void *userData) {
+                auto *data = static_cast<std::pair<Gateway *, std::string> *>(userData);
+                Gateway *gw = data->first;
+                std::string reconnectUrl = data->second;
+                delete data;
+
+                if (gw && !gw->m_shuttingDown.load()) {
+                    Options opts = gw->m_options;
+                    opts.url = reconnectUrl;
+                    gw->connect(opts);
+                }
+            },
+            new std::pair<Gateway *, std::string>(this, url));
+    });
 }

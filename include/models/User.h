@@ -7,6 +7,17 @@
 #include <nlohmann/json.hpp>
 
 /**
+ * @brief Represents a user's nameplate collectible
+ */
+struct Nameplate {
+    std::string asset;
+    std::optional<std::string> expiresAt;
+    std::optional<std::string> label;
+    std::optional<std::string> palette;
+    std::optional<std::string> skuId;
+};
+
+/**
  * @brief Represents a Discord user
  * @see https://discord.com/developers/docs/resources/user
  */
@@ -45,16 +56,36 @@ class User {
      */
     std::string getDefaultAvatarUrl() const;
 
-    std::string id;                              ///< User ID (snowflake)
-    std::string username;                        ///< User's username
-    std::string discriminator;                   ///< 4-digit tag ("0" for new system, "1234" for legacy)
-    std::optional<std::string> globalName;       ///< User's display name (set by user)
-    std::optional<std::string> avatar;           ///< Avatar hash
-    std::optional<std::string> avatarDecoration; ///< Avatar decoration hash
-    std::optional<std::string> banner;           ///< Banner hash
-    std::optional<uint32_t> accentColor;         ///< Banner color (if no banner)
-    bool bot = false;                            ///< Whether user is a bot
-    bool system = false;                         ///< Whether user is a Discord system user
-    std::optional<int> premiumType;              ///< Nitro type (0=None, 1=Classic, 2=Nitro, 3=Basic)
-    std::optional<int> publicFlags;              ///< User flags bitfield
+    /**
+     * @brief Get the user's avatar decoration URL from Discord CDN
+     * @return CDN URL for avatar decoration, or empty string if none set
+     */
+    std::string getAvatarDecorationUrl() const;
+
+    /**
+     * @brief Get the user's static nameplate URL from Discord CDN
+     * @param size Desired image size (default 128, options: 64, 128, 256, 512)
+     * @return CDN URL for static nameplate, or empty string if none set
+     */
+    std::string getNameplateUrl(int size = 128) const;
+
+    /**
+     * @brief Get the user's animated nameplate URL from Discord CDN
+     * @return CDN URL for animated nameplate (WebM format), or empty string if none set
+     */
+    std::string getNameplateAnimatedUrl() const;
+
+    std::string id;
+    std::string username;
+    std::string discriminator;
+    std::optional<std::string> globalName;
+    std::optional<std::string> avatar;
+    std::optional<std::string> avatarDecoration;
+    std::optional<std::string> banner;
+    std::optional<uint32_t> accentColor;
+    std::optional<Nameplate> nameplate;
+    bool bot = false;
+    bool system = false;
+    std::optional<int> premiumType;
+    std::optional<int> publicFlags;
 };

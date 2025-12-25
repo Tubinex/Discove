@@ -130,4 +130,28 @@ std::string getChannelIconUrl(const std::string &channelId, const std::string &i
  */
 std::string getStickerUrl(const std::string &stickerId);
 
+/**
+ * @brief Construct avatar decoration URL
+ * @param assetHash Avatar decoration asset hash (may start with 'a_' for animated)
+ * @return CDN URL for avatar decoration preset (APNG if animated, WebP/PNG if static)
+ * @note Animated decorations return .png URLs but contain APNG data, not .gif
+ */
+std::string getAvatarDecorationUrl(const std::string &assetHash);
+
+/**
+ * @brief Construct static nameplate URL
+ * @param assetPath Nameplate asset path (e.g., "nameplates/straw/fluttering_static/")
+ * @param size Unused - kept for API compatibility (nameplates use static.png)
+ * @return CDN URL for static nameplate (format: cdn.discordapp.com/assets/collectibles/{assetPath}static.png)
+ */
+std::string getNameplateUrl(const std::string &assetPath, int size = 128);
+
+/**
+ * @brief Construct animated nameplate URL
+ * @param assetPath Nameplate asset path (e.g., "nameplates/its_showtime/encore_orange/")
+ * @return CDN URL for animated nameplate (format: cdn.discordapp.com/assets/collectibles/{assetPath}asset.webm)
+ * @note Returns WebM video format - may need conversion for some use cases
+ */
+std::string getNameplateAnimatedUrl(const std::string &assetPath);
+
 } // namespace CDNUtils

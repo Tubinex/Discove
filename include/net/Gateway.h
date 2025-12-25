@@ -100,6 +100,7 @@ class Gateway {
 
     bool connect(const Options &opt = Options{});
     void disconnect();
+    void reconnect(bool resume = true);
 
     void send(const std::string &text);
     void send(const Json &j);
@@ -135,6 +136,8 @@ class Gateway {
     void handleMessageCreate(const Json &data);
 
     void handleHello(const Json &data);
+    void handleReconnect(const Json &data);
+    void handleInvalidSession(const Json &data);
     void startHeartbeat(int intervalMs);
     void sendHeartbeat();
     void stopHeartbeat();
@@ -179,8 +182,12 @@ class Gateway {
     std::optional<ReadyState> m_readyState;
     std::vector<GuildSummary> m_guilds;
 
-    // Heartbeat management
     std::atomic<int> m_heartbeatInterval{0};
     std::atomic<bool> m_heartbeatRunning{false};
     std::atomic<int> m_lastSequence{-1};
+    std::atomic<bool> m_heartbeatAcked{true};
+
+    std::string m_sessionId;
+    std::string m_resumeGatewayUrl;
+    std::mutex m_sessionMutex;
 };
