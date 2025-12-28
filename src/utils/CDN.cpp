@@ -51,8 +51,8 @@ std::string getUserBannerUrl(const std::string &userId, const std::string &banne
     return url.str();
 }
 
-std::string getGuildIconUrl(const std::string &guildId, const std::string &iconHash, int size) {
-    std::string ext = getImageExtension(iconHash);
+std::string getGuildIconUrl(const std::string &guildId, const std::string &iconHash, int size, bool preferWebp) {
+    std::string ext = getImageExtension(iconHash, preferWebp);
     std::ostringstream url;
     url << CDN_BASE << "/icons/" << guildId << "/" << iconHash << ext << "?size=" << size;
     return url.str();

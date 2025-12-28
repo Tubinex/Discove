@@ -9,16 +9,18 @@
 
 namespace Images {
 
-// Image loading and caching
 using ImageCallback = std::function<void(Fl_RGB_Image *)>;
 
 void loadImageAsync(const std::string &url, ImageCallback callback);
 
 Fl_RGB_Image *getCachedImage(const std::string &url);
 
+std::string getCacheFilePath(const std::string &url, const std::string &extension);
+
 void clearCache();
 
-// Image manipulation
+void shutdownDownloadWorker();
+
 /**
  * @brief Create a circular image from the source image
  * @param source Source image to mask

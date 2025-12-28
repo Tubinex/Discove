@@ -25,10 +25,6 @@ void HomeScreen::setupUI() {
 
     m_profileBubble = new ProfileBubble(0, h() - PROFILE_HEIGHT, GUILD_BAR_WIDTH + SIDEBAR_WIDTH, PROFILE_HEIGHT);
 
-    m_guildBar->addGuild("1", "", "Test Server 1");
-    m_guildBar->addGuild("2", "", "Another Server");
-    m_guildBar->addGuild("3", "", "Cool Guild");
-    m_guildBar->setSelectedGuild("1");
 
     m_sidebar->setGuild("1", "Test Server 1");
     m_sidebar->addTextChannel("100", "general");
@@ -38,7 +34,6 @@ void HomeScreen::setupUI() {
     m_sidebar->addVoiceChannel("201", "Gaming");
     m_sidebar->setSelectedChannel("100");
 
-    // Default user data (will be overwritten by store subscription)
     m_profileBubble->setUser("123", "TestUser", "", "1234");
     m_profileBubble->setStatus("online");
 
@@ -57,7 +52,7 @@ void HomeScreen::subscribeToStore() {
                 m_profileBubble->setStatus(user.status);
             }
         },
-        std::equal_to<std::optional<UserProfile>>{}, true // Fire immediately
+        std::equal_to<std::optional<UserProfile>>{}, true
     );
 }
 

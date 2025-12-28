@@ -1,9 +1,13 @@
 #pragma once
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include "models/GuildFolder.h"
+#include "models/GuildInfo.h"
 
 struct RouteState {
     std::string currentPath = "";
@@ -43,4 +47,7 @@ struct AppState {
     int counter = 0;
     RouteState route;
     std::optional<UserProfile> currentUser;
+    std::vector<GuildFolder> guildFolders;
+    std::vector<uint64_t> guildPositions;
+    std::vector<GuildInfo> guilds;
 };

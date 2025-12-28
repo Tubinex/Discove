@@ -1,146 +1,271 @@
 #include "ui/components/GuildBar.h"
 
-#include "ui/Theme.h"
-
 #include <FL/Fl.H>
+#include <FL/Fl_Box.H>
 #include <FL/fl_draw.H>
 
-GuildBar::GuildBar(int x, int y, int w, int h, const char *label) : Fl_Widget(x, y, w, h, label) {
-    box(FL_NO_BOX);
-}
+#include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
 
-void GuildBar::draw() {
-    fl_color(ThemeColors::BG_PRIMARY);
-    fl_rectf(x(), y(), w(), h());
+#include "models/GuildFolder.h"
+#include "models/GuildInfo.h"
+#include "state/AppState.h"
+#include "ui/IconManager.h"
+#include "ui/Theme.h"
+#include "ui/components/GuildFolderWidget.h"
+#include "ui/components/GuildIcon.h"
+#include "utils/Logger.h"
 
-    int currentY = y() + 8 - m_scrollOffset;
-    for (size_t i = 0; i < m_guilds.size(); ++i) {
-        const auto &guild = m_guilds[i];
-        bool selected = (guild.id == m_selectedGuildId);
-        bool hovered = (static_cast<int>(i) == m_hoveredIndex);
-
-        drawGuildIcon(guild, currentY, selected, hovered);
-
-        currentY += GUILD_ICON_SIZE + GUILD_SPACING;
-    }
-}
-
-void GuildBar::drawGuildIcon(const GuildItem &guild, int yPos, bool selected, bool hovered) {
-    int centerX = x() + w() / 2;
-    int iconX = centerX - GUILD_ICON_SIZE / 2;
-
-    if (selected || hovered) {
-        fl_color(FL_WHITE);
-        int barHeight = selected ? GUILD_ICON_SIZE : (hovered ? GUILD_ICON_SIZE / 2 : 0);
-        int barY = yPos + (GUILD_ICON_SIZE - barHeight) / 2;
-        fl_rectf(x(), barY, 4, barHeight);
+namespace {
+class HomeIcon : public Fl_Box {
+  public:
+    HomeIcon(int X, int Y, int W, int H) : Fl_Box(X, Y, W, H) {
+        box(FL_ROUNDED_BOX);
+        color(ThemeColors::BRAND_PRIMARY);
     }
 
-    if (guild.hasUnread && !selected) {
-        fl_color(FL_WHITE);
-        fl_pie(x() + 2, yPos + GUILD_ICON_SIZE / 2 - 4, 8, 8, 0, 360);
-    }
+    void setOnClickCallback(std::function<void()> callback) { onClickCallback_ = std::move(callback); }
 
-    int borderRadius = (selected || hovered) ? GUILD_ICON_SIZE / 3 : GUILD_ICON_SIZE / 2;
-    fl_color(ThemeColors::BG_SECONDARY);
-
-    fl_pie(iconX, yPos, borderRadius * 2, borderRadius * 2, 90, 180);
-    fl_pie(iconX + GUILD_ICON_SIZE - borderRadius * 2, yPos, borderRadius * 2, borderRadius * 2, 0, 90);
-    fl_pie(iconX, yPos + GUILD_ICON_SIZE - borderRadius * 2, borderRadius * 2, borderRadius * 2, 180, 270);
-    fl_pie(iconX + GUILD_ICON_SIZE - borderRadius * 2, yPos + GUILD_ICON_SIZE - borderRadius * 2,
-           borderRadius * 2, borderRadius * 2, 270, 360);
-
-    fl_rectf(iconX + borderRadius, yPos, GUILD_ICON_SIZE - borderRadius * 2, GUILD_ICON_SIZE);
-    fl_rectf(iconX, yPos + borderRadius, GUILD_ICON_SIZE, GUILD_ICON_SIZE - borderRadius * 2);
-
-    // TODO: Load and draw actual guild icon image
-    if (!guild.name.empty()) {
-        fl_color(ThemeColors::TEXT_NORMAL);
-        fl_font(FL_HELVETICA_BOLD, 20);
-
-        std::string initial(1, guild.name[0]);
-        int textW = static_cast<int>(fl_width(initial.c_str()));
-        int textH = fl_height();
-
-        fl_draw(initial.c_str(),
-                iconX + (GUILD_ICON_SIZE - textW) / 2,
-                yPos + (GUILD_ICON_SIZE + textH) / 2 - fl_descent());
-    }
-}
-
-int GuildBar::handle(int event) {
-    switch (event) {
-    case FL_PUSH: {
-        int index = getGuildIndexAt(Fl::event_x(), Fl::event_y());
-        if (index >= 0 && index < static_cast<int>(m_guilds.size())) {
-            m_selectedGuildId = m_guilds[index].id;
-            if (m_onGuildSelected) {
-                m_onGuildSelected(m_selectedGuildId);
+    int handle(int event) override {
+        switch (event) {
+        case FL_PUSH:
+            if (onClickCallback_) {
+                onClickCallback_();
             }
-            redraw();
             return 1;
+        default:
+            return Fl_Box::handle(event);
         }
-        break;
     }
 
-    case FL_MOVE:
-    case FL_ENTER:
-    case FL_LEAVE: {
-        int newHovered = (event == FL_LEAVE) ? -1 : getGuildIndexAt(Fl::event_x(), Fl::event_y());
-        if (newHovered != m_hoveredIndex) {
-            m_hoveredIndex = newHovered;
-            redraw();
-        }
-        return 1;
-    }
+  private:
+    std::function<void()> onClickCallback_;
+};
+} // namespace
 
-    case FL_MOUSEWHEEL: {
-        int dy = Fl::event_dy();
-        m_scrollOffset += dy * 20;
+GuildBar::GuildBar(int x, int y, int w, int h, const char *label) : Fl_Group(x, y, w, h, label) {
+    box(FL_FLAT_BOX);
+    color(ThemeColors::BG_SECONDARY);
+    clip_children(1);
+    end();
 
-        int maxScroll = static_cast<int>(m_guilds.size()) * (GUILD_ICON_SIZE + GUILD_SPACING);
-        if (m_scrollOffset < 0) m_scrollOffset = 0;
-        if (m_scrollOffset > maxScroll) m_scrollOffset = maxScroll;
-
-        redraw();
-        return 1;
-    }
-    }
-
-    return Fl_Widget::handle(event);
+    subscribeToStore();
+    refresh();
 }
 
-void GuildBar::addGuild(const std::string &guildId, const std::string &iconUrl, const std::string &name) {
-    GuildItem item;
-    item.id = guildId;
-    item.iconUrl = iconUrl;
-    item.name = name;
-    item.y = static_cast<int>(m_guilds.size()) * (GUILD_ICON_SIZE + GUILD_SPACING);
-    m_guilds.push_back(item);
+GuildBar::~GuildBar() {
+    if (m_guildDataListenerId != 0) {
+        Store::get().unsubscribe(m_guildDataListenerId);
+    }
+}
+
+void GuildBar::subscribeToStore() {
+    m_guildDataListenerId = Store::get().subscribe([this](const AppState &state) { refresh(); });
+}
+
+void GuildBar::refresh() {
+    const AppState state = Store::get().snapshot();
+    const int iconSize = 48;
+    const int spacing = 8;
+    const int iconMargin = (w() - iconSize) / 2;
+
+    auto &guilds = state.guilds;
+    auto &folders = state.guildFolders;
+
+    std::vector<std::string> newSignature;
+    newSignature.push_back("guilds:" + std::to_string(guilds.size()));
+    newSignature.push_back("folders:" + std::to_string(folders.size()));
+    for (const auto &folder : folders) {
+        newSignature.push_back("f" + std::to_string(folder.id) + ":" + std::to_string(folder.guildIds.size()));
+    }
+
+    bool needsRebuild = (newSignature != m_layoutSignature) || (children() == 0);
+    if (!needsRebuild) {
+        return;
+    }
+
+    if (needsRebuild) {
+        while (children() > 0) {
+            auto *w = child(children() - 1);
+            remove(w);
+            delete w;
+        }
+
+        begin();
+
+        auto *home = new HomeIcon(0, 0, iconSize, iconSize);
+        if (m_onHomeClicked) {
+            home->setOnClickCallback(m_onHomeClicked);
+        }
+        auto *logoIcon = IconManager::load_icon("discord", 32);
+        if (logoIcon) {
+            home->image(logoIcon);
+        }
+
+        new Fl_Box(0, 0, w(), 4);
+        auto *separator = new Fl_Box(0, 0, w() - 16, 2);
+        separator->box(FL_FLAT_BOX);
+        separator->color(ThemeColors::SEPARATOR_GUILD);
+
+        std::unordered_set<std::string> guildsInAnyFolder;
+        for (const auto &folder : folders) {
+            for (const auto &guildId : folder.guildIds) {
+                guildsInAnyFolder.insert(guildId);
+            }
+        }
+
+        auto findGuild = [&guilds](const std::string &id) -> const GuildInfo * {
+            for (const auto &g : guilds) {
+                if (g.id == id)
+                    return &g;
+            }
+            return nullptr;
+        };
+
+        for (const auto &folder : folders) {
+            if (folder.guildIds.empty())
+                continue;
+
+            if (folder.id == -1) {
+                for (const auto &guildId : folder.guildIds) {
+                    const GuildInfo *guild = findGuild(guildId);
+                    if (guild) {
+                        auto *icon = new GuildIcon(0, 0, iconSize, guild->id, guild->icon, guild->name);
+                        if (m_onGuildSelected) {
+                            icon->setOnClickCallback(m_onGuildSelected);
+                        }
+                    }
+                }
+            } else {
+                auto *folderWidget = new GuildFolderWidget(0, 0, iconSize);
+                if (folder.color.has_value()) {
+                    folderWidget->setColor(folder.color.value());
+                }
+
+                for (const auto &guildId : folder.guildIds) {
+                    const GuildInfo *guild = findGuild(guildId);
+                    if (guild) {
+                        auto *icon = new GuildIcon(0, 0, iconSize, guild->id, guild->icon, guild->name);
+                        if (m_onGuildSelected) {
+                            icon->setOnClickCallback(m_onGuildSelected);
+                        }
+                        folderWidget->addGuild(icon);
+                    }
+                }
+
+                folderWidget->layoutIcons();
+            }
+        }
+
+        for (const auto &guild : guilds) {
+            if (guildsInAnyFolder.find(guild.id) == guildsInAnyFolder.end()) {
+                auto *icon = new GuildIcon(0, 0, iconSize, guild.id, guild.icon, guild.name);
+                if (m_onGuildSelected) {
+                    icon->setOnClickCallback(m_onGuildSelected);
+                }
+            }
+        }
+
+        end();
+        m_layoutSignature = std::move(newSignature);
+    }
+
+    repositionChildren();
+}
+
+void GuildBar::repositionChildren() {
+    const int iconSize = 48;
+    const int spacing = 8;
+    const int iconMargin = (w() - iconSize) / 2;
+
+    int contentHeight = 0;
+    if (children() > 0)
+        contentHeight += iconSize + 4;
+    if (children() > 1)
+        contentHeight += 4;
+    if (children() > 2)
+        contentHeight += 2 + 12;
+
+    for (int i = 3; i < children(); ++i) {
+        contentHeight += child(i)->h() + spacing;
+    }
+
+    const int maxScroll = contentHeight - h();
+    if (maxScroll > 0) {
+        if (m_scrollOffset > 0)
+            m_scrollOffset = 0;
+        if (m_scrollOffset < -maxScroll)
+            m_scrollOffset = -maxScroll;
+    } else {
+        m_scrollOffset = 0;
+    }
+
+    int currentY = y() + static_cast<int>(m_scrollOffset);
+    if (children() > 0) {
+        child(0)->resize(x() + iconMargin, currentY, iconSize, iconSize);
+        currentY += iconSize + 4;
+    }
+
+    if (children() > 1) {
+        child(1)->resize(x(), currentY, w(), 4);
+        currentY += 4;
+    }
+
+    if (children() > 2) {
+        child(2)->resize(x() + 8, currentY, w() - 16, 2);
+        currentY += 2 + 12;
+    }
+
+    for (int i = 3; i < children(); ++i) {
+        auto *w = child(i);
+        w->resize(x() + iconMargin, currentY, iconSize, w->h());
+        currentY += w->h() + spacing;
+    }
+
     redraw();
 }
 
-void GuildBar::setSelectedGuild(const std::string &guildId) {
-    if (m_selectedGuildId != guildId) {
-        m_selectedGuildId = guildId;
-        redraw();
-    }
+void GuildBar::resize(int x, int y, int w, int h) {
+    Fl_Group::resize(x, y, w, h);
+    refresh();
 }
 
-int GuildBar::getGuildIndexAt(int mx, int my) const {
-    if (mx < x() || mx > x() + w()) {
-        return -1;
-    }
-
-    int currentY = y() + 8 - m_scrollOffset;
-
-    for (size_t i = 0; i < m_guilds.size(); ++i) {
-        if (my >= currentY && my < currentY + GUILD_ICON_SIZE) {
-            return static_cast<int>(i);
+int GuildBar::handle(int event) {
+    if (event == FL_MOUSEWHEEL) {
+        if (!Fl::event_inside(this)) {
+            return Fl_Group::handle(event);
         }
-        currentY += GUILD_ICON_SIZE + GUILD_SPACING;
+
+        const int iconSize = 48;
+        const int spacing = 8;
+
+        int contentHeight = 0;
+        if (children() > 0)
+            contentHeight += iconSize + 4;
+        if (children() > 1)
+            contentHeight += 4;
+        if (children() > 2)
+            contentHeight += 2 + 12;
+
+        for (int i = 3; i < children(); ++i) {
+            contentHeight += child(i)->h() + spacing;
+        }
+
+        const int maxScroll = contentHeight - h();
+
+        if (maxScroll > 0) {
+            m_scrollOffset -= Fl::event_dy() * 20.0;
+
+            if (m_scrollOffset > 0)
+                m_scrollOffset = 0;
+            if (m_scrollOffset < -maxScroll)
+                m_scrollOffset = -maxScroll;
+
+            repositionChildren();
+            return 1;
+        }
     }
 
-    return -1;
+    return Fl_Group::handle(event);
 }
- 

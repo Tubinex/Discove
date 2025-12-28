@@ -1,61 +1,31 @@
 #pragma once
 
-#include <FL/Fl_Widget.H>
+#include <FL/Fl_Group.H>
 #include <functional>
 #include <string>
 #include <vector>
 
-class GuildBar : public Fl_Widget {
+#include "state/Store.h"
+
+class GuildBar : public Fl_Group {
   public:
     GuildBar(int x, int y, int w, int h, const char *label = nullptr);
+    ~GuildBar() override;
 
-    void draw() override;
+    void refresh();
+    void resize(int x, int y, int w, int h) override;
     int handle(int event) override;
+    void repositionChildren();
 
-    /**
-     * @brief Add a guild to the bar
-     * @param guildId Guild snowflake ID
-     * @param iconUrl Guild icon URL (can be empty for default)
-     * @param name Guild name
-     */
-    void addGuild(const std::string &guildId, const std::string &iconUrl, const std::string &name);
-
-    /**
-     * @brief Set the selected guild
-     * @param guildId Guild ID to select
-     */
-    void setSelectedGuild(const std::string &guildId);
-
-    /**
-     * @brief Get currently selected guild ID
-     * @return Selected guild ID or empty string if none
-     */
-    std::string getSelectedGuild() const { return m_selectedGuildId; }
-
-    /**
-     * @brief Set callback for guild selection changes
-     * @param cb Callback function(guildId)
-     */
-    void setOnGuildSelected(std::function<void(const std::string &)> cb) { m_onGuildSelected = cb; }
+    void setOnGuildSelected(std::function<void(const std::string &)> cb) { m_onGuildSelected = std::move(cb); }
+    void setOnHomeClicked(std::function<void()> cb) { m_onHomeClicked = std::move(cb); }
 
   private:
-    struct GuildItem {
-        std::string id;
-        std::string iconUrl;
-        std::string name;
-        int y;      // Y position in the bar
-        bool hasUnread = false;
-    };
+    void subscribeToStore();
 
-    std::vector<GuildItem> m_guilds;
-    std::string m_selectedGuildId;
-    int m_hoveredIndex = -1;
-    int m_scrollOffset = 0;
+    Store::ListenerId m_guildDataListenerId = 0;
+    double m_scrollOffset = 0.0;
     std::function<void(const std::string &)> m_onGuildSelected;
-
-    static constexpr int GUILD_ICON_SIZE = 48;
-    static constexpr int GUILD_SPACING = 8;
-
-    void drawGuildIcon(const GuildItem &guild, int yPos, bool selected, bool hovered);
-    int getGuildIndexAt(int mx, int my) const;
+    std::function<void()> m_onHomeClicked;
+    std::vector<std::string> m_layoutSignature;
 };

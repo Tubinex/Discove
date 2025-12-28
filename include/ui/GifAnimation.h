@@ -9,11 +9,7 @@
 
 class GifAnimation {
   public:
-    enum class ScalingStrategy {
-        None,
-        Lazy,
-        Eager
-    };
+    enum class ScalingStrategy { None, Lazy, Eager };
 
     explicit GifAnimation(const std::string &filepath, ScalingStrategy strategy = ScalingStrategy::Lazy);
     ~GifAnimation();
@@ -54,9 +50,7 @@ class GifAnimation {
         int width;
         int height;
 
-        bool operator==(const ScaledFrameKey &other) const {
-            return width == other.width && height == other.height;
-        }
+        bool operator==(const ScaledFrameKey &other) const { return width == other.width && height == other.height; }
     };
 
     struct ScaledFrameKeyHash {

@@ -17,6 +17,11 @@ constexpr Fl_Color TEXT_MUTED = 0x949ba4FF;
 constexpr Fl_Color TEXT_LINK = 0x00a8fcFF;
 constexpr Fl_Color COLOR_TRANSPARENT = 0x00000000;
 
+constexpr Fl_Color BRAND_PRIMARY = 0x5865F2FF;
+constexpr Fl_Color BRAND_ON_PRIMARY = 0xFFFFFFFF;
+constexpr Fl_Color SEPARATOR_GUILD = 0x35353cFF;
+constexpr Fl_Color GUILD_ICON_BG = 0x2b2b31FF;
+
 constexpr Fl_Color BTN_PRIMARY = 0x4F6FFFFF;
 constexpr Fl_Color BTN_PRIMARY_HOVER = 0x3D5EEFFF;
 constexpr Fl_Color BTN_SECONDARY = 0x4A4A4FFF;

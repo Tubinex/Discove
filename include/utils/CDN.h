@@ -53,9 +53,11 @@ std::string getUserBannerUrl(const std::string &userId, const std::string &banne
  * @param guildId Guild's snowflake ID
  * @param iconHash Guild's icon hash
  * @param size Desired size (default 256)
+ * @param preferWebp Whether to prefer .webp over .png for static images (default false)
  * @return CDN URL for guild icon
  */
-std::string getGuildIconUrl(const std::string &guildId, const std::string &iconHash, int size = 256);
+std::string getGuildIconUrl(const std::string &guildId, const std::string &iconHash, int size = 256,
+                            bool preferWebp = false);
 
 /**
  * @brief Construct guild splash URL (invite background)

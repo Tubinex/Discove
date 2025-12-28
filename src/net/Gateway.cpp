@@ -1,5 +1,6 @@
 #include "net/Gateway.h"
 
+#include "models/GuildFolder.h"
 #include "models/User.h"
 #include "state/Store.h"
 #include "utils/CDN.h"
@@ -301,6 +302,20 @@ void Gateway::handleReady(const Json &data) {
             Logger::info("Parsed " + std::to_string(folders.size()) + " guild folders and " +
                          std::to_string(positions.size()) + " guild positions");
 
+            Store::get().update([&folders, &positions](AppState &appState) {
+                appState.guildFolders.clear();
+                appState.guildFolders.reserve(folders.size());
+
+                for (const auto &parsedFolder : folders) {
+                    appState.guildFolders.push_back(GuildFolder::fromProtobuf(parsedFolder));
+                }
+
+                appState.guildPositions = positions;
+            });
+
+            Logger::info("Stored " + std::to_string(folders.size()) + " guild folders and " +
+                         std::to_string(positions.size()) + " guild positions in AppState");
+
             try {
                 std::ofstream folderFile("discove/guild_folders.txt");
                 if (folderFile.is_open()) {
@@ -389,7 +404,6 @@ void Gateway::handleReady(const Json &data) {
 
     m_readyState = state;
 
-    // Update Store with user profile
     Store::get().update([&state](AppState &appState) {
         UserProfile profile;
         profile.id = state.userId;
@@ -398,7 +412,6 @@ void Gateway::handleReady(const Json &data) {
         profile.globalName = state.globalName;
         profile.avatarHash = state.avatar;
 
-        // Generate avatar URL using CDN utils
         if (!state.avatar.empty()) {
             profile.avatarUrl = CDNUtils::getUserAvatarUrl(state.userId, state.avatar);
         } else {
@@ -409,12 +422,16 @@ void Gateway::handleReady(const Json &data) {
     });
 
     m_guilds.clear();
+    std::vector<GuildInfo> guildsForState;
+
     if (data.contains("guilds") && data["guilds"].is_array()) {
         for (const auto &guildJson : data["guilds"]) {
             GuildSummary guild;
+            GuildInfo guildInfo;
 
             if (guildJson.contains("id") && guildJson["id"].is_string()) {
                 guild.id = guildJson["id"].get<std::string>();
+                guildInfo.id = guild.id;
             }
 
             if (guildJson.contains("properties") && guildJson["properties"].is_object()) {
@@ -422,36 +439,48 @@ void Gateway::handleReady(const Json &data) {
 
                 if (props.contains("name") && props["name"].is_string()) {
                     guild.name = props["name"].get<std::string>();
+                    guildInfo.name = guild.name;
                 }
 
                 if (props.contains("icon") && props["icon"].is_string()) {
                     guild.icon = props["icon"].get<std::string>();
+                    guildInfo.icon = guild.icon;
                 }
 
                 if (props.contains("banner") && props["banner"].is_string()) {
                     guild.banner = props["banner"].get<std::string>();
+                    guildInfo.banner = guild.banner;
                 }
             } else {
                 if (guildJson.contains("name") && guildJson["name"].is_string()) {
                     guild.name = guildJson["name"].get<std::string>();
+                    guildInfo.name = guild.name;
                 }
 
                 if (guildJson.contains("icon") && guildJson["icon"].is_string()) {
                     guild.icon = guildJson["icon"].get<std::string>();
+                    guildInfo.icon = guild.icon;
                 }
 
                 if (guildJson.contains("banner") && guildJson["banner"].is_string()) {
                     guild.banner = guildJson["banner"].get<std::string>();
+                    guildInfo.banner = guild.banner;
                 }
             }
 
             if (!guild.id.empty()) {
                 m_guilds.push_back(std::move(guild));
+                guildsForState.push_back(std::move(guildInfo));
             }
         }
     }
 
-    // Log collectibles from users array
+    Store::get().update([guildsForState = std::move(guildsForState)](AppState &appState) mutable {
+        appState.guilds = std::move(guildsForState);
+    });
+
+    Logger::info("Stored " + std::to_string(m_guilds.size()) + " guilds in AppState");
+
     if (data.contains("users") && data["users"].is_array()) {
         Logger::info("Processing " + std::to_string(data["users"].size()) + " users for collectibles");
 
@@ -469,13 +498,11 @@ void Gateway::handleReady(const Json &data) {
                     username = user.username;
                 }
 
-                // Count avatar decorations
                 std::string decorationUrl = user.getAvatarDecorationUrl();
                 if (!decorationUrl.empty()) {
                     avatarDecorationCount++;
                 }
 
-                // Count nameplates
                 std::string nameplateUrl = user.getNameplateUrl();
                 if (!nameplateUrl.empty()) {
                     nameplateCount++;
@@ -485,9 +512,8 @@ void Gateway::handleReady(const Json &data) {
             }
         }
 
-        Logger::info("Collectibles summary: " + std::to_string(avatarDecorationCount) +
-                     " avatar decorations, " + std::to_string(nameplateCount) + " nameplates from " +
-                     std::to_string(userCount) + " users");
+        Logger::info("Collectibles summary: " + std::to_string(avatarDecorationCount) + " avatar decorations, " +
+                     std::to_string(nameplateCount) + " nameplates from " + std::to_string(userCount) + " users");
     }
 }
 
