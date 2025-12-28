@@ -48,6 +48,7 @@ GuildBar::GuildBar(int x, int y, int w, int h, const char *label) : Fl_Group(x, 
     box(FL_FLAT_BOX);
     color(ThemeColors::BG_SECONDARY);
     clip_children(1);
+    resizable(nullptr);
     end();
 
     subscribeToStore();
@@ -60,6 +61,11 @@ GuildBar::~GuildBar() {
     }
 }
 
+void GuildBar::draw() {
+    draw_box();
+    draw_children();
+}
+
 void GuildBar::subscribeToStore() {
     m_guildDataListenerId = Store::get().subscribe([this](const AppState &state) { refresh(); });
 }
@@ -68,7 +74,8 @@ void GuildBar::refresh() {
     const AppState state = Store::get().snapshot();
     const int iconSize = 48;
     const int spacing = 8;
-    const int iconMargin = (w() - iconSize) / 2;
+    const int guildBarWidth = w();
+    const int iconMargin = (guildBarWidth - iconSize) / 2;
 
     auto &guilds = state.guilds;
     auto &folders = state.guildFolders;
@@ -103,8 +110,8 @@ void GuildBar::refresh() {
             home->image(logoIcon);
         }
 
-        new Fl_Box(0, 0, w(), 4);
-        auto *separator = new Fl_Box(0, 0, w() - 16, 2);
+        new Fl_Box(0, 0, guildBarWidth, 4);
+        auto *separator = new Fl_Box(0, 0, guildBarWidth - 16, 2);
         separator->box(FL_FLAT_BOX);
         separator->color(ThemeColors::SEPARATOR_GUILD);
 
@@ -177,11 +184,13 @@ void GuildBar::refresh() {
 void GuildBar::repositionChildren() {
     const int iconSize = 48;
     const int spacing = 8;
-    const int iconMargin = (w() - iconSize) / 2;
+    const int guildBarWidth = w();
+    const int iconMargin = (guildBarWidth - iconSize) / 2;
+    const int topPadding = iconMargin;
 
     int contentHeight = 0;
     if (children() > 0)
-        contentHeight += iconSize + 4;
+        contentHeight += topPadding + iconSize + 4;
     if (children() > 1)
         contentHeight += 4;
     if (children() > 2)
@@ -201,19 +210,19 @@ void GuildBar::repositionChildren() {
         m_scrollOffset = 0;
     }
 
-    int currentY = y() + static_cast<int>(m_scrollOffset);
+    int currentY = y() + topPadding + static_cast<int>(m_scrollOffset);
     if (children() > 0) {
         child(0)->resize(x() + iconMargin, currentY, iconSize, iconSize);
         currentY += iconSize + 4;
     }
 
     if (children() > 1) {
-        child(1)->resize(x(), currentY, w(), 4);
+        child(1)->resize(x(), currentY, guildBarWidth, 4);
         currentY += 4;
     }
 
     if (children() > 2) {
-        child(2)->resize(x() + 8, currentY, w() - 16, 2);
+        child(2)->resize(x() + 8, currentY, guildBarWidth - 16, 2);
         currentY += 2 + 12;
     }
 
@@ -228,7 +237,9 @@ void GuildBar::repositionChildren() {
 
 void GuildBar::resize(int x, int y, int w, int h) {
     Fl_Group::resize(x, y, w, h);
-    refresh();
+    if (children() > 0) {
+        repositionChildren();
+    }
 }
 
 int GuildBar::handle(int event) {
@@ -239,10 +250,13 @@ int GuildBar::handle(int event) {
 
         const int iconSize = 48;
         const int spacing = 8;
+        const int guildBarWidth = w();
+        const int iconMargin = (guildBarWidth - iconSize) / 2;
+        const int topPadding = iconMargin;
 
         int contentHeight = 0;
         if (children() > 0)
-            contentHeight += iconSize + 4;
+            contentHeight += topPadding + iconSize + 4;
         if (children() > 1)
             contentHeight += 4;
         if (children() > 2)

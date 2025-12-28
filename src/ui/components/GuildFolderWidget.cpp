@@ -10,8 +10,11 @@
 
 GuildFolderWidget::GuildFolderWidget(int x, int y, int size) : Fl_Group(x, y, size, size), iconSize_(size) {
     box(FL_NO_BOX);
+    clip_children(1);
     end();
 }
+
+GuildFolderWidget::~GuildFolderWidget() { Fl::remove_timeout(animationTimerCallback, this); }
 
 void GuildFolderWidget::addGuild(GuildIcon *icon) {
     if (icon) {
@@ -23,65 +26,117 @@ void GuildFolderWidget::addGuild(GuildIcon *icon) {
 void GuildFolderWidget::layoutIcons() {
     Fl_Color folderColor = color_ ? color_ : ThemeColors::BG_TERTIARY;
 
-    if (expanded_) {
-        const int folderIconSize = static_cast<int>(iconSize_ * 0.85);
-        const int padding = (iconSize_ - folderIconSize) / 2;
-        int currentY = y() + iconSize_ + 8;
+    float progress = animationProgress_;
 
-        for (auto *icon : guildIcons_) {
-            icon->resize(x() + padding, currentY, folderIconSize, folderIconSize);
+    const int gridPadding = 4;
+    const int gridIconSize = (iconSize_ - 3 * gridPadding) / 2;
+
+    const int folderIconSize = static_cast<int>(iconSize_ * 0.85);
+    const int expandedPadding = (iconSize_ - folderIconSize) / 2;
+
+    bool showGrid = progress < 0.5f;
+    bool showExpanded = progress > 0.01f;
+
+    for (size_t i = 0; i < guildIcons_.size(); ++i) {
+        auto *icon = guildIcons_[i];
+
+        if (showGrid && i < 4) {
+            int gridX = x() + gridPadding + static_cast<int>(i % 2) * (gridIconSize + gridPadding);
+            int gridY = y() + gridPadding + static_cast<int>(i / 2) * (gridIconSize + gridPadding);
+
+            int expandedHeight = getExpandedHeight();
+            int slideOffset = static_cast<int>((expandedHeight - iconSize_) * progress);
+            int currentY = gridY + slideOffset;
+
+            icon->resize(gridX, currentY, gridIconSize, gridIconSize);
+            icon->setCornerRadius(gridIconSize / 2);
+            icon->setMaskColor(folderColor);
+            icon->setFallbackFontSize(14);
+            icon->show();
+        } else if (showExpanded) {
+            int expandedX = x() + expandedPadding;
+            int expandedY = y() + iconSize_ + 8 + static_cast<int>(i) * (folderIconSize + 8);
+
+            icon->resize(expandedX, expandedY, folderIconSize, folderIconSize);
             icon->setCornerRadius(10);
             icon->setMaskColor(folderColor);
             icon->setFallbackFontSize(20);
             icon->show();
-            currentY += folderIconSize + 8;
-        }
-    } else {
-        const int padding = 4;
-        const int gridIconSize = (iconSize_ - 3 * padding) / 2;
-
-        for (size_t i = 0; i < guildIcons_.size() && i < 4; ++i) {
-            int gridX = x() + padding + static_cast<int>(i % 2) * (gridIconSize + padding);
-            int gridY = y() + padding + static_cast<int>(i / 2) * (gridIconSize + padding);
-            guildIcons_[i]->resize(gridX, gridY, gridIconSize, gridIconSize);
-            guildIcons_[i]->setCornerRadius(gridIconSize / 2);
-            guildIcons_[i]->setMaskColor(folderColor);
-            guildIcons_[i]->setFallbackFontSize(14);
-            guildIcons_[i]->show();
-        }
-        for (size_t i = 4; i < guildIcons_.size(); ++i) {
-            guildIcons_[i]->hide();
+        } else {
+            icon->hide();
         }
     }
 }
 
 void GuildFolderWidget::resize(int x, int y, int w, int h) {
-    int correctHeight;
-    if (expanded_) {
-        const int folderIconSize = static_cast<int>(iconSize_ * 0.85);
-        correctHeight = iconSize_ + 8 + (static_cast<int>(guildIcons_.size()) * (folderIconSize + 8));
+    if (animating_) {
+        Fl_Group::resize(x, y, w, h);
     } else {
-        correctHeight = iconSize_;
+        int correctHeight;
+        if (expanded_) {
+            const int folderIconSize = static_cast<int>(iconSize_ * 0.85);
+            correctHeight = iconSize_ + 8 + (static_cast<int>(guildIcons_.size()) * (folderIconSize + 8));
+        } else {
+            correctHeight = iconSize_;
+        }
+        Fl_Group::resize(x, y, w, correctHeight);
     }
 
-    Fl_Group::resize(x, y, w, correctHeight);
     layoutIcons();
 }
 
 void GuildFolderWidget::setExpanded(bool expanded) {
-    if (expanded_ == expanded) {
+    if (expanded_ == expanded && !animating_) {
         return;
     }
 
-    expanded_ = expanded;
-
-    if (expanded_) {
-        const int folderIconSize = static_cast<int>(iconSize_ * 0.85);
-        int totalHeight = iconSize_ + 8 + (static_cast<int>(guildIcons_.size()) * (folderIconSize + 8));
-        Fl_Group::resize(x(), y(), w(), totalHeight);
-    } else {
-        Fl_Group::resize(x(), y(), w(), iconSize_);
+    targetExpanded_ = expanded;
+    if (!animating_ || (animating_ && expanded_ != targetExpanded_)) {
+        animating_ = true;
+        Fl::remove_timeout(animationTimerCallback, this);
+        Fl::add_timeout(1.0 / 60.0, animationTimerCallback, this); // 60 FPS
     }
+}
+
+void GuildFolderWidget::toggle() { setExpanded(!expanded_); }
+
+void GuildFolderWidget::animationTimerCallback(void *data) {
+    auto *widget = static_cast<GuildFolderWidget *>(data);
+    if (widget) {
+        widget->updateAnimation();
+    }
+}
+
+void GuildFolderWidget::updateAnimation() {
+    if (!animating_) {
+        return;
+    }
+
+    const float animationSpeed = 0.15f;
+
+    if (targetExpanded_) {
+        animationProgress_ += animationSpeed;
+        if (animationProgress_ >= 1.0f) {
+            animationProgress_ = 1.0f;
+            expanded_ = true;
+            animating_ = false;
+        }
+    } else {
+        animationProgress_ -= animationSpeed;
+        if (animationProgress_ <= 0.0f) {
+            animationProgress_ = 0.0f;
+            expanded_ = false;
+            animating_ = false;
+        }
+    }
+
+    float progress = animationProgress_;
+
+    int collapsedHeight = getCollapsedHeight();
+    int expandedHeight = getExpandedHeight();
+    int currentHeight = collapsedHeight + static_cast<int>((expandedHeight - collapsedHeight) * progress);
+
+    Fl_Group::resize(x(), y(), w(), currentHeight);
 
     layoutIcons();
     redraw();
@@ -93,9 +148,11 @@ void GuildFolderWidget::setExpanded(bool expanded) {
             guildBar->repositionChildren();
         }
     }
-}
 
-void GuildFolderWidget::toggle() { setExpanded(!expanded_); }
+    if (animating_) {
+        Fl::repeat_timeout(1.0 / 60.0, animationTimerCallback, this);
+    }
+}
 
 int GuildFolderWidget::handle(int event) {
     switch (event) {
@@ -124,32 +181,35 @@ int GuildFolderWidget::handle(int event) {
 void GuildFolderWidget::draw() {
     Fl_Color folderColor = color_ ? color_ : ThemeColors::BG_TERTIARY;
 
-    if (expanded_) {
-        const int r = cornerRadius_;
-        fl_color(folderColor);
-        fl_pie(x(), y(), r * 2, r * 2, 90, 180);
-        fl_pie(x() + iconSize_ - r * 2, y(), r * 2, r * 2, 0, 90);
-        fl_pie(x(), y() + h() - r * 2, r * 2, r * 2, 180, 270);
-        fl_pie(x() + iconSize_ - r * 2, y() + h() - r * 2, r * 2, r * 2, 270, 360);
-        fl_rectf(x() + r, y(), iconSize_ - r * 2, h());
-        fl_rectf(x(), y() + r, iconSize_, h() - r * 2);
+    const int r = cornerRadius_;
+    fl_color(folderColor);
+    fl_pie(x(), y(), r * 2, r * 2, 90, 180);
+    fl_pie(x() + iconSize_ - r * 2, y(), r * 2, r * 2, 0, 90);
+    fl_pie(x(), y() + h() - r * 2, r * 2, r * 2, 180, 270);
+    fl_pie(x() + iconSize_ - r * 2, y() + h() - r * 2, r * 2, r * 2, 270, 360);
+    fl_rectf(x() + r, y(), iconSize_ - r * 2, h());
+    fl_rectf(x(), y() + r, iconSize_, h() - r * 2);
 
+    fl_push_clip(x(), y(), w(), h());
+
+    float progress = animationProgress_;
+    if (progress > 0.01f) {
         auto *folderIcon = IconManager::load_icon("folder", 24);
         if (folderIcon) {
-            folderIcon->draw(x() + (iconSize_ - 24) / 2, y() + (iconSize_ - 24) / 2);
+            int finalY = y() + (iconSize_ - 24) / 2;
+            int startY = y() - 24;
+            int currentY = startY + static_cast<int>((finalY - startY) * progress);
+
+            folderIcon->draw(x() + (iconSize_ - 24) / 2, currentY);
         }
-
-        Fl_Group::draw();
-    } else {
-        const int r = cornerRadius_;
-        fl_color(folderColor);
-        fl_pie(x(), y(), r * 2, r * 2, 90, 180);
-        fl_pie(x() + iconSize_ - r * 2, y(), r * 2, r * 2, 0, 90);
-        fl_pie(x(), y() + iconSize_ - r * 2, r * 2, r * 2, 180, 270);
-        fl_pie(x() + iconSize_ - r * 2, y() + iconSize_ - r * 2, r * 2, r * 2, 270, 360);
-        fl_rectf(x() + r, y(), iconSize_ - r * 2, iconSize_);
-        fl_rectf(x(), y() + r, iconSize_, iconSize_ - r * 2);
-
-        Fl_Group::draw();
     }
+
+    for (int i = 0; i < children(); i++) {
+        Fl_Widget *child = this->child(i);
+        if (child && child->visible()) {
+            draw_child(*child);
+        }
+    }
+
+    fl_pop_clip();
 }

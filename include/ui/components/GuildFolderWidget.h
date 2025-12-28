@@ -9,7 +9,7 @@ class GuildIcon;
 class GuildFolderWidget : public Fl_Group {
   public:
     GuildFolderWidget(int x, int y, int size);
-    ~GuildFolderWidget() override = default;
+    ~GuildFolderWidget() override;
 
     void addGuild(GuildIcon *icon);
 
@@ -25,10 +25,20 @@ class GuildFolderWidget : public Fl_Group {
 
     void layoutIcons();
 
-  private:
+  protected:
     void draw() override;
+
+  private:
     int handle(int event) override;
     void resize(int x, int y, int w, int h) override;
+
+    static void animationTimerCallback(void *data);
+    void updateAnimation();
+    int getCollapsedHeight() const { return iconSize_; }
+    int getExpandedHeight() const {
+        const int folderIconSize = static_cast<int>(iconSize_ * 0.85);
+        return iconSize_ + 8 + (static_cast<int>(guildIcons_.size()) * (folderIconSize + 8));
+    }
 
     std::vector<GuildIcon *> guildIcons_;
     std::string name_;
@@ -37,4 +47,8 @@ class GuildFolderWidget : public Fl_Group {
     int cornerRadius_{12};
     bool expanded_{false};
     bool hovered_{false};
+
+    bool animating_{false};
+    float animationProgress_{0.0f};
+    bool targetExpanded_{false};
 };

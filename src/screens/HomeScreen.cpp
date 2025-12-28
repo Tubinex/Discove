@@ -25,7 +25,6 @@ void HomeScreen::setupUI() {
 
     m_profileBubble = new ProfileBubble(0, h() - PROFILE_HEIGHT, GUILD_BAR_WIDTH + SIDEBAR_WIDTH, PROFILE_HEIGHT);
 
-
     m_sidebar->setGuild("1", "Test Server 1");
     m_sidebar->addTextChannel("100", "general");
     m_sidebar->addTextChannel("101", "random");
@@ -52,8 +51,7 @@ void HomeScreen::subscribeToStore() {
                 m_profileBubble->setStatus(user.status);
             }
         },
-        std::equal_to<std::optional<UserProfile>>{}, true
-    );
+        std::equal_to<std::optional<UserProfile>>{}, true);
 }
 
 void HomeScreen::onCreate(const Context &ctx) {}
@@ -77,13 +75,20 @@ void HomeScreen::resize(int x, int y, int w, int h) {
 void HomeScreen::draw() {
     int gapY = h() - PROFILE_HEIGHT;
 
-    fl_color(ThemeColors::BG_PRIMARY);
-    fl_rectf(0, gapY, GUILD_BAR_WIDTH, PROFILE_HEIGHT);
-
     fl_color(ThemeColors::BG_SECONDARY);
+    fl_rectf(0, gapY, GUILD_BAR_WIDTH, PROFILE_HEIGHT);
     fl_rectf(GUILD_BAR_WIDTH, gapY, SIDEBAR_WIDTH, PROFILE_HEIGHT);
 
-    Screen::draw();
+    for (int i = 0; i < children(); i++) {
+        Fl_Widget *child = this->child(i);
+        if (child && child->visible() && child != m_profileBubble) {
+            draw_child(*child);
+        }
+    }
+
+    if (m_profileBubble && m_profileBubble->visible()) {
+        draw_child(*m_profileBubble);
+    }
 }
 
 void HomeScreen::onTransitionIn(float progress) {

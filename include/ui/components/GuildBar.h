@@ -15,6 +15,7 @@ class GuildBar : public Fl_Group {
     void refresh();
     void resize(int x, int y, int w, int h) override;
     int handle(int event) override;
+    void draw() override;
     void repositionChildren();
 
     void setOnGuildSelected(std::function<void(const std::string &)> cb) { m_onGuildSelected = std::move(cb); }
