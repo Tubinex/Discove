@@ -20,8 +20,8 @@ HomeScreen::~HomeScreen() {
 void HomeScreen::setupUI() {
     begin();
 
-    m_guildBar = new GuildBar(0, 0, GUILD_BAR_WIDTH, h() - PROFILE_HEIGHT);
-    m_sidebar = new Sidebar(GUILD_BAR_WIDTH, 0, SIDEBAR_WIDTH, h() - PROFILE_HEIGHT);
+    m_guildBar = new GuildBar(0, 0, GUILD_BAR_WIDTH, h() - PROFILE_HEIGHT - GUILDBAR_BOTTOM_PADDING);
+    m_sidebar = new Sidebar(GUILD_BAR_WIDTH, 0, SIDEBAR_WIDTH, h() - PROFILE_HEIGHT - GUILDBAR_BOTTOM_PADDING);
 
     m_profileBubble = new ProfileBubble(0, h() - PROFILE_HEIGHT, GUILD_BAR_WIDTH + SIDEBAR_WIDTH, PROFILE_HEIGHT);
 
@@ -36,11 +36,22 @@ void HomeScreen::setupUI() {
     m_profileBubble->setUser("123", "TestUser", "", "1234");
     m_profileBubble->setStatus("online");
 
+    m_profileBubble->setOnMicrophoneClicked([]() {
+        Logger::info("Microphone toggled");
+    });
+
+    m_profileBubble->setOnHeadphonesClicked([]() {
+        Logger::info("Headphones toggled");
+    });
+
+    m_profileBubble->setOnSettingsClicked([]() {
+        Logger::info("Settings clicked");
+    });
+
     end();
 }
 
 void HomeScreen::subscribeToStore() {
-    // Subscribe to user profile changes
     m_userProfileListenerId = Store::get().subscribe<std::optional<UserProfile>>(
         [](const AppState &state) { return state.currentUser; },
         [this](const std::optional<UserProfile> &profile) {
@@ -62,10 +73,10 @@ void HomeScreen::resize(int x, int y, int w, int h) {
     Screen::resize(x, y, w, h);
 
     if (m_guildBar) {
-        m_guildBar->resize(0, 0, GUILD_BAR_WIDTH, h - PROFILE_HEIGHT);
+        m_guildBar->resize(0, 0, GUILD_BAR_WIDTH, h - PROFILE_HEIGHT - GUILDBAR_BOTTOM_PADDING);
     }
     if (m_sidebar) {
-        m_sidebar->resize(GUILD_BAR_WIDTH, 0, SIDEBAR_WIDTH, h - PROFILE_HEIGHT);
+        m_sidebar->resize(GUILD_BAR_WIDTH, 0, SIDEBAR_WIDTH, h - PROFILE_HEIGHT - GUILDBAR_BOTTOM_PADDING);
     }
     if (m_profileBubble) {
         m_profileBubble->resize(0, h - PROFILE_HEIGHT, GUILD_BAR_WIDTH + SIDEBAR_WIDTH, PROFILE_HEIGHT);
@@ -73,11 +84,11 @@ void HomeScreen::resize(int x, int y, int w, int h) {
 }
 
 void HomeScreen::draw() {
-    int gapY = h() - PROFILE_HEIGHT;
+    int gapY = h() - PROFILE_HEIGHT - GUILDBAR_BOTTOM_PADDING;
 
     fl_color(ThemeColors::BG_SECONDARY);
-    fl_rectf(0, gapY, GUILD_BAR_WIDTH, PROFILE_HEIGHT);
-    fl_rectf(GUILD_BAR_WIDTH, gapY, SIDEBAR_WIDTH, PROFILE_HEIGHT);
+    fl_rectf(0, gapY, GUILD_BAR_WIDTH, PROFILE_HEIGHT + GUILDBAR_BOTTOM_PADDING);
+    fl_rectf(GUILD_BAR_WIDTH, gapY, SIDEBAR_WIDTH, PROFILE_HEIGHT + GUILDBAR_BOTTOM_PADDING);
 
     for (int i = 0; i < children(); i++) {
         Fl_Widget *child = this->child(i);

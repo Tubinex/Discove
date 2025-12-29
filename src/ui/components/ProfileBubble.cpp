@@ -1,6 +1,7 @@
 #include "ui/components/ProfileBubble.h"
 
 #include "ui/GifAnimation.h"
+#include "ui/IconManager.h"
 #include "ui/Theme.h"
 #include "utils/Fonts.h"
 #include "utils/Images.h"
@@ -26,24 +27,43 @@ ProfileBubble::~ProfileBubble() {
 }
 
 void ProfileBubble::draw() {
-    const int MARGIN = 8;
-    const int BORDER_RADIUS = 8;
+    int bubbleX = x() + BUBBLE_MARGIN;
+    int bubbleY = y() + BUBBLE_MARGIN;
+    int bubbleW = w() - (BUBBLE_MARGIN * 2);
+    int bubbleH = h() - (BUBBLE_MARGIN * 2);
 
-    int bubbleX = x() + MARGIN;
-    int bubbleY = y() + MARGIN;
-    int bubbleW = w() - (MARGIN * 2);
-    int bubbleH = h() - (MARGIN * 2);
+    fl_color(ThemeColors::BG_TERTIARY);
 
-    fl_color(ThemeColors::BG_SECONDARY_ALT);
+    fl_pie(bubbleX, bubbleY, BUBBLE_BORDER_RADIUS * 2, BUBBLE_BORDER_RADIUS * 2, 90, 180);
+    fl_pie(bubbleX + bubbleW - BUBBLE_BORDER_RADIUS * 2, bubbleY, BUBBLE_BORDER_RADIUS * 2, BUBBLE_BORDER_RADIUS * 2, 0,
+           90);
+    fl_pie(bubbleX, bubbleY + bubbleH - BUBBLE_BORDER_RADIUS * 2, BUBBLE_BORDER_RADIUS * 2, BUBBLE_BORDER_RADIUS * 2,
+           180, 270);
+    fl_pie(bubbleX + bubbleW - BUBBLE_BORDER_RADIUS * 2, bubbleY + bubbleH - BUBBLE_BORDER_RADIUS * 2,
+           BUBBLE_BORDER_RADIUS * 2, BUBBLE_BORDER_RADIUS * 2, 270, 360);
 
-    fl_pie(bubbleX, bubbleY, BORDER_RADIUS * 2, BORDER_RADIUS * 2, 90, 180);
-    fl_pie(bubbleX + bubbleW - BORDER_RADIUS * 2, bubbleY, BORDER_RADIUS * 2, BORDER_RADIUS * 2, 0, 90);
-    fl_pie(bubbleX, bubbleY + bubbleH - BORDER_RADIUS * 2, BORDER_RADIUS * 2, BORDER_RADIUS * 2, 180, 270);
-    fl_pie(bubbleX + bubbleW - BORDER_RADIUS * 2, bubbleY + bubbleH - BORDER_RADIUS * 2, BORDER_RADIUS * 2,
-           BORDER_RADIUS * 2, 270, 360);
+    fl_rectf(bubbleX + BUBBLE_BORDER_RADIUS, bubbleY, bubbleW - BUBBLE_BORDER_RADIUS * 2, bubbleH);
+    fl_rectf(bubbleX, bubbleY + BUBBLE_BORDER_RADIUS, bubbleW, bubbleH - BUBBLE_BORDER_RADIUS * 2);
 
-    fl_rectf(bubbleX + BORDER_RADIUS, bubbleY, bubbleW - BORDER_RADIUS * 2, bubbleH);
-    fl_rectf(bubbleX, bubbleY + BORDER_RADIUS, bubbleW, bubbleH - BORDER_RADIUS * 2);
+    fl_color(ThemeColors::BORDER_PRIMARY);
+    fl_line_style(FL_SOLID, 1);
+
+    fl_arc(bubbleX, bubbleY, BUBBLE_BORDER_RADIUS * 2, BUBBLE_BORDER_RADIUS * 2, 90, 180);
+    fl_arc(bubbleX + bubbleW - BUBBLE_BORDER_RADIUS * 2, bubbleY, BUBBLE_BORDER_RADIUS * 2, BUBBLE_BORDER_RADIUS * 2, 0,
+           90);
+    fl_arc(bubbleX, bubbleY + bubbleH - BUBBLE_BORDER_RADIUS * 2, BUBBLE_BORDER_RADIUS * 2, BUBBLE_BORDER_RADIUS * 2,
+           180, 270);
+    fl_arc(bubbleX + bubbleW - BUBBLE_BORDER_RADIUS * 2, bubbleY + bubbleH - BUBBLE_BORDER_RADIUS * 2,
+           BUBBLE_BORDER_RADIUS * 2, BUBBLE_BORDER_RADIUS * 2, 270, 360);
+
+    fl_line(bubbleX + BUBBLE_BORDER_RADIUS, bubbleY, bubbleX + bubbleW - BUBBLE_BORDER_RADIUS, bubbleY);
+    fl_line(bubbleX + bubbleW, bubbleY + BUBBLE_BORDER_RADIUS, bubbleX + bubbleW,
+            bubbleY + bubbleH - BUBBLE_BORDER_RADIUS);
+    fl_line(bubbleX + BUBBLE_BORDER_RADIUS, bubbleY + bubbleH, bubbleX + bubbleW - BUBBLE_BORDER_RADIUS,
+            bubbleY + bubbleH);
+    fl_line(bubbleX, bubbleY + BUBBLE_BORDER_RADIUS, bubbleX, bubbleY + bubbleH - BUBBLE_BORDER_RADIUS);
+
+    fl_line_style(0);
 
     int avatarX = bubbleX + (bubbleH - AVATAR_SIZE) / 2;
     int avatarY = bubbleY + (bubbleH - AVATAR_SIZE) / 2;
@@ -67,15 +87,20 @@ void ProfileBubble::draw() {
     }
 
     int buttonY = bubbleY + (bubbleH - BUTTON_SIZE) / 2;
-    int buttonX = bubbleX + bubbleW - BUTTON_SIZE - 4;
+    int buttonX = bubbleX + bubbleW - BUTTON_SIZE - BUTTON_RIGHT_PADDING;
 
-    drawButton(buttonX, buttonY, "⚙", m_hoveredButton == 2, false);
-    buttonX -= BUTTON_SIZE + 4;
+    const char *settingsIcon = "settings";
+    drawButton(buttonX, buttonY, settingsIcon, false, m_hoveredButton == 2, false, false);
+    buttonX -= (ICON_SECTION_WIDTH + CHEVRON_SECTION_WIDTH) + BUTTON_GAP;
 
-    drawButton(buttonX, buttonY, "🎧", m_hoveredButton == 1, m_headphonesDeafened);
-    buttonX -= BUTTON_SIZE + 4;
+    const char *headphonesIcon = m_headphonesDeafened ? "deafened" : "headphones";
+    drawButton(buttonX, buttonY, headphonesIcon, true, m_hoveredButton == 1,
+               m_hoveredButton == 1 && m_hoveredButtonChevron, m_headphonesDeafened);
+    buttonX -= (ICON_SECTION_WIDTH + CHEVRON_SECTION_WIDTH) + BUTTON_GAP;
 
-    drawButton(buttonX, buttonY, "🎤", m_hoveredButton == 0, m_microphoneMuted);
+    const char *micIcon = m_microphoneMuted ? "muted" : "microphone";
+    drawButton(buttonX, buttonY, micIcon, true, m_hoveredButton == 0, m_hoveredButton == 0 && m_hoveredButtonChevron,
+               m_microphoneMuted);
 }
 
 void ProfileBubble::drawAvatar(int avatarX, int avatarY) {
@@ -119,7 +144,7 @@ void ProfileBubble::drawStatusDot(int dotX, int dotY) {
         statusColor = fl_rgb_color(116, 127, 141);
     }
 
-    fl_color(ThemeColors::BG_SECONDARY_ALT);
+    fl_color(ThemeColors::BG_TERTIARY);
     int borderSize = STATUS_DOT_SIZE + (STATUS_DOT_BORDER_WIDTH * 2);
     fl_pie(dotX - STATUS_DOT_BORDER_WIDTH, dotY - STATUS_DOT_BORDER_WIDTH, borderSize, borderSize, 0, 360);
 
@@ -127,24 +152,102 @@ void ProfileBubble::drawStatusDot(int dotX, int dotY) {
     fl_pie(dotX, dotY, STATUS_DOT_SIZE, STATUS_DOT_SIZE, 0, 360);
 }
 
-void ProfileBubble::drawButton(int btnX, int btnY, const char *icon, bool hovered, bool active) {
-    if (hovered) {
-        fl_color(ThemeColors::BG_MODIFIER_HOVER);
-        fl_pie(btnX, btnY, BUTTON_SIZE, BUTTON_SIZE, 0, 360);
+void ProfileBubble::drawButton(int btnX, int btnY, const char *iconName, bool isToggle, bool hovered,
+                               bool chevronHovered, bool active) {
+    int buttonWidth = isToggle ? (ICON_SECTION_WIDTH + CHEVRON_SECTION_WIDTH) : BUTTON_SIZE;
+
+    auto drawRoundedRect = [&](int x, int y, int w, int h, Fl_Color color, bool roundTL = true, bool roundTR = true,
+                               bool roundBL = true, bool roundBR = true) {
+        fl_color(color);
+        constexpr int r = BUBBLE_BORDER_RADIUS;
+
+        if (roundTL)
+            fl_pie(x, y, r * 2, r * 2, 90, 180);
+        if (roundTR)
+            fl_pie(x + w - r * 2, y, r * 2, r * 2, 0, 90);
+        if (roundBL)
+            fl_pie(x, y + h - r * 2, r * 2, r * 2, 180, 270);
+        if (roundBR)
+            fl_pie(x + w - r * 2, y + h - r * 2, r * 2, r * 2, 270, 360);
+
+        int leftOffset = roundTL || roundBL ? r : 0;
+        int rightOffset = roundTR || roundBR ? r : 0;
+        fl_rectf(x + leftOffset, y, w - leftOffset - rightOffset, h);
+
+        if (roundTL || roundBL)
+            fl_rectf(x, y + r, leftOffset, h - r * 2);
+        if (roundTR || roundBR)
+            fl_rectf(x + w - rightOffset, y + r, rightOffset, h - r * 2);
+
+        if (!roundTL)
+            fl_rectf(x, y, r, r);
+        if (!roundTR)
+            fl_rectf(x + w - r, y, r, r);
+        if (!roundBL)
+            fl_rectf(x, y + h - r, r, r);
+        if (!roundBR)
+            fl_rectf(x + w - r, y + h - r, r, r);
+    };
+
+    if (active && hovered) {
+        if (isToggle) {
+            drawRoundedRect(btnX, btnY, buttonWidth, BUTTON_SIZE, ThemeColors::PROFILE_BUTTON_ACTIVE_HOVER_BASE, true,
+                            true, true, true);
+
+            if (chevronHovered) {
+                int chevronX = btnX + ICON_SECTION_WIDTH + BUTTON_HOVER_GAP;
+                int chevronWidth = CHEVRON_SECTION_WIDTH - BUTTON_HOVER_GAP;
+                drawRoundedRect(chevronX, btnY, chevronWidth, BUTTON_SIZE,
+                                ThemeColors::PROFILE_BUTTON_ACTIVE_HOVER_STRONG, false, true, false, true);
+            } else {
+                int iconAreaWidth = ICON_SECTION_WIDTH - BUTTON_HOVER_GAP;
+                drawRoundedRect(btnX, btnY, iconAreaWidth, BUTTON_SIZE, ThemeColors::PROFILE_BUTTON_ACTIVE_HOVER_STRONG,
+                                true, false, true, false);
+            }
+        } else {
+            drawRoundedRect(btnX, btnY, buttonWidth, BUTTON_SIZE, ThemeColors::PROFILE_BUTTON_ACTIVE_HOVER_STRONG, true,
+                            true, true, true);
+        }
+    } else if (active) {
+        drawRoundedRect(btnX, btnY, buttonWidth, BUTTON_SIZE, ThemeColors::PROFILE_BUTTON_ACTIVE_BG, true, true, true,
+                        true);
+    } else if (hovered) {
+        if (isToggle) {
+            drawRoundedRect(btnX, btnY, buttonWidth, BUTTON_SIZE, ThemeColors::PROFILE_BUTTON_HOVER_BASE, true, true,
+                            true, true);
+
+            if (chevronHovered) {
+                int chevronX = btnX + ICON_SECTION_WIDTH + BUTTON_HOVER_GAP;
+                int chevronWidth = CHEVRON_SECTION_WIDTH - BUTTON_HOVER_GAP;
+                drawRoundedRect(chevronX, btnY, chevronWidth, BUTTON_SIZE, ThemeColors::PROFILE_BUTTON_HOVER_STRONG,
+                                false, true, false, true);
+            } else {
+                int iconAreaWidth = ICON_SECTION_WIDTH - BUTTON_HOVER_GAP;
+                drawRoundedRect(btnX, btnY, iconAreaWidth, BUTTON_SIZE, ThemeColors::PROFILE_BUTTON_HOVER_STRONG, true,
+                                false, true, false);
+            }
+        } else {
+            drawRoundedRect(btnX, btnY, buttonWidth, BUTTON_SIZE, ThemeColors::PROFILE_BUTTON_HOVER_STRONG, true, true,
+                            true, true);
+        }
     }
 
-    if (active) {
-        fl_color(fl_rgb_color(240, 71, 71));
-    } else {
-        fl_color(ThemeColors::TEXT_MUTED);
+    Fl_Color iconColor = active ? ThemeColors::PROFILE_BUTTON_ACTIVE_ICON : ThemeColors::TEXT_MUTED;
+    Fl_SVG_Image *iconImg = IconManager::load_recolored_icon(iconName, ICON_SIZE, iconColor);
+    if (iconImg) {
+        int iconX = btnX + (ICON_SECTION_WIDTH - ICON_SIZE) / 2;
+        int iconY = btnY + (BUTTON_SIZE - ICON_SIZE) / 2;
+        iconImg->draw(iconX, iconY);
     }
 
-    fl_font(FL_HELVETICA, 18);
-
-    int textW = static_cast<int>(fl_width(icon));
-    int textH = fl_height();
-
-    fl_draw(icon, btnX + (BUTTON_SIZE - textW) / 2, btnY + (BUTTON_SIZE + textH) / 2 - fl_descent());
+    if (isToggle) {
+        Fl_SVG_Image *arrowImg = IconManager::load_recolored_icon("chevron_down", ARROW_SIZE, iconColor);
+        if (arrowImg) {
+            int arrowX = btnX + ICON_SECTION_WIDTH + (CHEVRON_SECTION_WIDTH - ARROW_SIZE) / 2;
+            int arrowY = btnY + (BUTTON_SIZE - ARROW_SIZE) / 2;
+            arrowImg->draw(arrowX, arrowY);
+        }
+    }
 }
 
 int ProfileBubble::handle(int event) {
@@ -172,10 +275,34 @@ int ProfileBubble::handle(int event) {
     case FL_MOVE:
     case FL_ENTER:
     case FL_LEAVE: {
-        int newHovered = (event == FL_LEAVE) ? -1 : getButtonAt(Fl::event_x(), Fl::event_y());
+        int mx = Fl::event_x();
+        int my = Fl::event_y();
+        int newHovered = (event == FL_LEAVE) ? -1 : getButtonAt(mx, my);
+        bool newChevronHovered = false;
 
-        if (newHovered != m_hoveredButton) {
+        if (newHovered >= 0 && event != FL_LEAVE) {
+            int bubbleX = x() + BUBBLE_MARGIN;
+            int bubbleY = y() + BUBBLE_MARGIN;
+            int bubbleW = w() - (BUBBLE_MARGIN * 2);
+            int bubbleH = h() - (BUBBLE_MARGIN * 2);
+            int buttonY = bubbleY + (bubbleH - BUTTON_SIZE) / 2;
+            int buttonX = bubbleX + bubbleW - BUTTON_SIZE - BUTTON_RIGHT_PADDING;
+
+            if (newHovered == 2) {
+                newChevronHovered = false;
+            } else if (newHovered == 1) {
+                buttonX -= (ICON_SECTION_WIDTH + CHEVRON_SECTION_WIDTH) + BUTTON_GAP;
+                newChevronHovered = isChevronHovered(buttonX, buttonY, true, mx, my);
+            } else if (newHovered == 0) {
+                buttonX -= (ICON_SECTION_WIDTH + CHEVRON_SECTION_WIDTH) + BUTTON_GAP;
+                buttonX -= (ICON_SECTION_WIDTH + CHEVRON_SECTION_WIDTH) + BUTTON_GAP;
+                newChevronHovered = isChevronHovered(buttonX, buttonY, true, mx, my);
+            }
+        }
+
+        if (newHovered != m_hoveredButton || newChevronHovered != m_hoveredButtonChevron) {
             m_hoveredButton = newHovered;
+            m_hoveredButtonChevron = newChevronHovered;
             redraw();
         }
         return 1;
@@ -321,30 +448,39 @@ void ProfileBubble::setStatus(const std::string &status) {
 }
 
 int ProfileBubble::getButtonAt(int mx, int my) const {
-    const int MARGIN = 8;
-    int bubbleX = x() + MARGIN;
-    int bubbleY = y() + MARGIN;
-    int bubbleW = w() - (MARGIN * 2);
-    int bubbleH = h() - (MARGIN * 2);
+    int bubbleX = x() + BUBBLE_MARGIN;
+    int bubbleY = y() + BUBBLE_MARGIN;
+    int bubbleW = w() - (BUBBLE_MARGIN * 2);
+    int bubbleH = h() - (BUBBLE_MARGIN * 2);
 
     int buttonY = bubbleY + (bubbleH - BUTTON_SIZE) / 2;
-    int buttonX = bubbleX + bubbleW - BUTTON_SIZE - 4;
+    int buttonX = bubbleX + bubbleW - BUTTON_SIZE - BUTTON_RIGHT_PADDING;
 
     if (mx >= buttonX && mx < buttonX + BUTTON_SIZE && my >= buttonY && my < buttonY + BUTTON_SIZE) {
         return 2;
     }
 
-    buttonX -= BUTTON_SIZE + 4;
-    if (mx >= buttonX && mx < buttonX + BUTTON_SIZE && my >= buttonY && my < buttonY + BUTTON_SIZE) {
+    buttonX -= (ICON_SECTION_WIDTH + CHEVRON_SECTION_WIDTH) + BUTTON_GAP;
+    if (mx >= buttonX && mx < buttonX + (ICON_SECTION_WIDTH + CHEVRON_SECTION_WIDTH) && my >= buttonY &&
+        my < buttonY + BUTTON_SIZE) {
         return 1;
     }
 
-    buttonX -= BUTTON_SIZE + 4;
-    if (mx >= buttonX && mx < buttonX + BUTTON_SIZE && my >= buttonY && my < buttonY + BUTTON_SIZE) {
+    buttonX -= (ICON_SECTION_WIDTH + CHEVRON_SECTION_WIDTH) + BUTTON_GAP;
+    if (mx >= buttonX && mx < buttonX + (ICON_SECTION_WIDTH + CHEVRON_SECTION_WIDTH) && my >= buttonY &&
+        my < buttonY + BUTTON_SIZE) {
         return 0;
     }
 
     return -1;
+}
+
+bool ProfileBubble::isChevronHovered(int btnX, int btnY, bool isToggle, int mx, int my) const {
+    if (!isToggle)
+        return false;
+
+    int chevronX = btnX + ICON_SECTION_WIDTH;
+    return mx >= chevronX && mx < chevronX + CHEVRON_SECTION_WIDTH && my >= btnY && my < btnY + BUTTON_SIZE;
 }
 
 void ProfileBubble::advanceFrame() {

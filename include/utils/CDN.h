@@ -7,6 +7,19 @@ namespace CDNUtils {
 constexpr const char *CDN_BASE = "https://cdn.discordapp.com";
 
 /**
+ * @brief Normalize size to valid Discord CDN size (16, 32, 48, 64, 128)
+ * @param size Requested size
+ * @return Closest valid Discord CDN size
+ */
+inline int normalizeSize(int size) {
+    if (size <= 16) return 16;
+    if (size <= 32) return 32;
+    if (size <= 48) return 48;
+    if (size <= 64) return 64;
+    return 128;
+}
+
+/**
  * @brief Get the file extension for an image hash
  * @param hash The image hash (may start with 'a_' for animated)
  * @param preferWebp Whether to prefer .webp over .png for static images

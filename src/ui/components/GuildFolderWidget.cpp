@@ -72,13 +72,7 @@ void GuildFolderWidget::resize(int x, int y, int w, int h) {
     if (animating_) {
         Fl_Group::resize(x, y, w, h);
     } else {
-        int correctHeight;
-        if (expanded_) {
-            const int folderIconSize = static_cast<int>(iconSize_ * 0.85);
-            correctHeight = iconSize_ + 8 + (static_cast<int>(guildIcons_.size()) * (folderIconSize + 8));
-        } else {
-            correctHeight = iconSize_;
-        }
+        int correctHeight = expanded_ ? getExpandedHeight() : getCollapsedHeight();
         Fl_Group::resize(x, y, w, correctHeight);
     }
 
@@ -194,13 +188,13 @@ void GuildFolderWidget::draw() {
 
     float progress = animationProgress_;
     if (progress > 0.01f) {
-        auto *folderIcon = IconManager::load_icon("folder", 24);
+        auto *folderIcon = IconManager::load_recolored_icon("folder", folderIconSize_, ThemeColors::BRAND_PRIMARY);
         if (folderIcon) {
-            int finalY = y() + (iconSize_ - 24) / 2;
-            int startY = y() - 24;
+            int finalY = y() + (iconSize_ - folderIconSize_) / 2;
+            int startY = y() - folderIconSize_;
             int currentY = startY + static_cast<int>((finalY - startY) * progress);
 
-            folderIcon->draw(x() + (iconSize_ - 24) / 2, currentY);
+            folderIcon->draw(x() + (iconSize_ - folderIconSize_) / 2, currentY);
         }
     }
 

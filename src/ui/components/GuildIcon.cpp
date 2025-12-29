@@ -6,6 +6,8 @@
 
 #include <cmath>
 #include <filesystem>
+#include <mutex>
+#include <unordered_set>
 
 #include "ui/GifAnimation.h"
 #include "ui/Theme.h"
@@ -17,10 +19,20 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+namespace {
+std::unordered_set<GuildIcon *> validIcons;
+std::mutex iconsMutex;
+} // namespace
+
 GuildIcon::GuildIcon(int x, int y, int size, const std::string &guildId, const std::string &iconHash,
                      const std::string &guildName)
     : Fl_Box(x, y, size, size), guildId_(guildId), iconHash_(iconHash), iconSize_(size) {
     box(FL_NO_BOX);
+
+    {
+        std::scoped_lock lock(iconsMutex);
+        validIcons.insert(this);
+    }
 
     isAnimated_ = !iconHash.empty() && iconHash.rfind("a_", 0) == 0;
 
@@ -30,10 +42,15 @@ GuildIcon::GuildIcon(int x, int y, int size, const std::string &guildId, const s
         fallbackLabel_ = "?";
     }
 
-    // Load static icon asynchronously
     if (!iconHash.empty()) {
         std::string url = CDNUtils::getGuildIconUrl(guildId, iconHash, size * 2, false);
         Images::loadImageAsync(url, [this](Fl_RGB_Image *img) {
+            {
+                std::scoped_lock lock(iconsMutex);
+                if (validIcons.find(this) == validIcons.end()) {
+                    return;
+                }
+            }
             if (img && img->w() > 0 && img->h() > 0) {
                 image_ = img;
                 redraw();
@@ -43,6 +60,10 @@ GuildIcon::GuildIcon(int x, int y, int size, const std::string &guildId, const s
 }
 
 GuildIcon::~GuildIcon() {
+    {
+        std::scoped_lock lock(iconsMutex);
+        validIcons.erase(this);
+    }
     stopAnimation();
 }
 

@@ -60,6 +60,7 @@ class ProfileBubble : public Fl_Widget {
     bool m_headphonesDeafened = false;
 
     int m_hoveredButton = -1;
+    bool m_hoveredButtonChevron = false;
 
     Fl_RGB_Image *m_avatarImage = nullptr;
     Fl_RGB_Image *m_circularAvatar = nullptr;
@@ -76,12 +77,25 @@ class ProfileBubble : public Fl_Widget {
     static constexpr int AVATAR_SIZE = 34;
     static constexpr int STATUS_DOT_SIZE = 10;
     static constexpr int STATUS_DOT_BORDER_WIDTH = 3;
-    static constexpr int BUTTON_SIZE = 32;
+
+    static constexpr int BUTTON_SIZE = 36;
+    static constexpr int ICON_SIZE = 20;
+    static constexpr int ARROW_SIZE = 14;
+    static constexpr int ICON_SECTION_WIDTH = BUTTON_SIZE;
+    static constexpr int CHEVRON_SECTION_WIDTH = 20;
+    static constexpr int BUTTON_GAP = 8;
+
+    static constexpr int BUBBLE_MARGIN = 8;
+    static constexpr int BUBBLE_BORDER_RADIUS = 8;
+    static constexpr int BUTTON_HOVER_GAP = 1;
+    static constexpr int BUTTON_RIGHT_PADDING = 12;
 
     void drawAvatar(int avatarX, int avatarY);
     void drawStatusDot(int dotX, int dotY);
-    void drawButton(int btnX, int btnY, const char *icon, bool hovered, bool active);
+    void drawButton(int btnX, int btnY, const char *iconName, bool isToggle, bool hovered, bool chevronHovered,
+                    bool active);
     int getButtonAt(int mx, int my) const;
+    bool isChevronHovered(int btnX, int btnY, bool isToggle, int mx, int my) const;
     void loadAvatar();
     void advanceFrame();
     static void animationTimerCallback(void *userdata);

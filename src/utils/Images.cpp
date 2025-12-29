@@ -33,9 +33,20 @@ std::mutex cache_mutex;
 std::unordered_set<std::string> failed_urls;
 std::mutex failed_mutex;
 
+struct RetryState {
+    int attemptCount{0};
+    std::chrono::steady_clock::time_point lastAttempt;
+};
+
+std::unordered_map<std::string, RetryState> retry_tracker;
+std::mutex retry_mutex;
+constexpr int MAX_RETRY_ATTEMPTS = 3;
+constexpr int BASE_RETRY_DELAY_MS = 1000;
+
 struct DownloadRequest {
     std::string url;
     ImageCallback callback;
+    int retryAttempt{0};
 };
 
 std::queue<DownloadRequest> download_queue;
@@ -46,6 +57,7 @@ std::atomic<int> active_workers{0};
 std::unordered_set<std::string> pending_downloads;
 constexpr int MAX_CONCURRENT_DOWNLOADS = 8;
 
+void downloadWorker();
 std::string detectImageFormat(const std::string &data) {
     if (data.size() < 8)
         return "unknown";
@@ -114,6 +126,64 @@ void markUrlAsFailed(const std::string &url) {
 void clearFailedUrl(const std::string &url) {
     std::scoped_lock lock(failed_mutex);
     failed_urls.erase(url);
+}
+
+bool canRetryNow(const std::string &url, int &outAttemptCount) {
+    std::scoped_lock lock(retry_mutex);
+    auto it = retry_tracker.find(url);
+    if (it == retry_tracker.end()) {
+        outAttemptCount = 0;
+        return true;
+    }
+
+    outAttemptCount = it->second.attemptCount;
+    if (outAttemptCount >= MAX_RETRY_ATTEMPTS) {
+        return false;
+    }
+
+    int delayMs = BASE_RETRY_DELAY_MS * (1 << outAttemptCount);
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - it->second.lastAttempt);
+
+    return elapsed.count() >= delayMs;
+}
+
+void recordRetryAttempt(const std::string &url) {
+    std::scoped_lock lock(retry_mutex);
+    auto &state = retry_tracker[url];
+    state.attemptCount++;
+    state.lastAttempt = std::chrono::steady_clock::now();
+}
+
+void clearRetryState(const std::string &url) {
+    std::scoped_lock lock(retry_mutex);
+    retry_tracker.erase(url);
+}
+
+void scheduleRetry(const std::string &url, ImageCallback callback, int attemptCount) {
+    int delayMs = BASE_RETRY_DELAY_MS * (1 << attemptCount);
+    Logger::debug("Scheduling retry " + std::to_string(attemptCount + 1) + "/" + std::to_string(MAX_RETRY_ATTEMPTS) +
+                  " for " + url + " in " + std::to_string(delayMs) + "ms");
+
+    std::thread([url, callback, delayMs]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+        {
+            std::scoped_lock lock(queue_mutex);
+            if (pending_downloads.find(url) != pending_downloads.end()) {
+                return;
+            }
+            int attemptCount;
+            if (!canRetryNow(url, attemptCount)) {
+                return;
+            }
+            pending_downloads.insert(url);
+            download_queue.push({url, callback, attemptCount});
+        }
+        queue_cv.notify_one();
+        if (active_workers < MAX_CONCURRENT_DOWNLOADS) {
+            std::thread(downloadWorker).detach();
+        }
+    }).detach();
 }
 
 std::string generateTempFilename(const std::string &extension) {
@@ -285,8 +355,7 @@ Fl_RGB_Image *imageFromData(const std::string &data, const std::string &url) {
     return nullptr;
 }
 
-void processImageRequest(const std::string &url, ImageCallback callback) {
-    // Check if this URL previously failed (404, etc.)
+void processImageRequest(const std::string &url, ImageCallback callback, int retryAttempt = 0) {
     if (!shouldAttemptDownload(url)) {
         auto *heapFn = new std::function<void()>([callback]() { callback(nullptr); });
         Fl::awake(
@@ -311,6 +380,7 @@ void processImageRequest(const std::string &url, ImageCallback callback) {
                     image_cache[url] = std::unique_ptr<Fl_RGB_Image>(image);
                 }
                 Logger::debug("Loaded from disk cache: " + url);
+                clearRetryState(url);
                 auto *heapFn = new std::function<void()>([callback, url]() {
                     Fl_RGB_Image *cachedImg = getCachedImage(url);
                     callback(cachedImg);
@@ -326,7 +396,13 @@ void processImageRequest(const std::string &url, ImageCallback callback) {
         }
     }
 
-    Logger::debug("Downloading image: " + url);
+    recordRetryAttempt(url);
+
+    std::string attemptInfo = retryAttempt > 0 ? " (attempt " + std::to_string(retryAttempt + 1) + "/" +
+                                                     std::to_string(MAX_RETRY_ATTEMPTS) + ")"
+                                               : "";
+    Logger::debug("Downloading image: " + url + attemptInfo);
+
     ix::HttpClient httpClient;
     httpClient.setTLSOptions(ix::SocketTLSOptions());
 
@@ -338,7 +414,17 @@ void processImageRequest(const std::string &url, ImageCallback callback) {
     ix::HttpResponsePtr response = httpClient.get(url, args);
 
     if (!response) {
-        Logger::error("Failed to fetch image from: " + url);
+        Logger::error("HTTP 0 (connection failed) for image: " + url);
+
+        if (retryAttempt < MAX_RETRY_ATTEMPTS - 1) {
+            scheduleRetry(url, callback, retryAttempt);
+            return;
+        } else {
+            Logger::warn("Max retries exceeded for: " + url);
+            markUrlAsFailed(url);
+            clearRetryState(url);
+        }
+
         auto *heapFn = new std::function<void()>([callback]() { callback(nullptr); });
         Fl::awake(
             [](void *p) {
@@ -354,6 +440,10 @@ void processImageRequest(const std::string &url, ImageCallback callback) {
 
         if (response->statusCode == 404 || response->statusCode == 403 || response->statusCode == 410) {
             markUrlAsFailed(url);
+            clearRetryState(url);
+        } else if (response->statusCode >= 500 && response->statusCode < 600 && retryAttempt < MAX_RETRY_ATTEMPTS - 1) {
+            scheduleRetry(url, callback, retryAttempt);
+            return;
         }
 
         auto *heapFn = new std::function<void()>([callback]() { callback(nullptr); });
@@ -402,6 +492,7 @@ void processImageRequest(const std::string &url, ImageCallback callback) {
     }
 
     clearFailedUrl(url);
+    clearRetryState(url);
     {
         std::scoped_lock lock(cache_mutex);
         image_cache[url] = std::unique_ptr<Fl_RGB_Image>(image);
@@ -446,7 +537,7 @@ void downloadWorker() {
             }
         }
 
-        processImageRequest(request.url, request.callback);
+        processImageRequest(request.url, request.callback, request.retryAttempt);
         {
             std::scoped_lock lock(queue_mutex);
             pending_downloads.erase(request.url);

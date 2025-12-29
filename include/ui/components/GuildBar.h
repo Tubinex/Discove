@@ -20,12 +20,18 @@ class GuildBar : public Fl_Group {
 
     void setOnGuildSelected(std::function<void(const std::string &)> cb) { m_onGuildSelected = std::move(cb); }
     void setOnHomeClicked(std::function<void()> cb) { m_onHomeClicked = std::move(cb); }
+    void setIconSize(int size) {
+        m_iconSize = size;
+        refresh();
+    }
+    int getIconSize() const { return m_iconSize; }
 
   private:
     void subscribeToStore();
 
     Store::ListenerId m_guildDataListenerId = 0;
     double m_scrollOffset = 0.0;
+    int m_iconSize = 42;
     std::function<void(const std::string &)> m_onGuildSelected;
     std::function<void()> m_onHomeClicked;
     std::vector<std::string> m_layoutSignature;

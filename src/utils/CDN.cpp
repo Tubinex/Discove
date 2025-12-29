@@ -14,9 +14,10 @@ std::string getImageExtension(const std::string &hash, bool preferWebp) {
 }
 
 std::string getUserAvatarUrl(const std::string &userId, const std::string &avatarHash, int size) {
+    int normalizedSize = normalizeSize(size);
     std::string ext = getImageExtension(avatarHash);
     std::ostringstream url;
-    url << CDN_BASE << "/avatars/" << userId << "/" << avatarHash << ext << "?size=" << size;
+    url << CDN_BASE << "/avatars/" << userId << "/" << avatarHash << ext << "?size=" << normalizedSize;
     return url.str();
 }
 
@@ -45,67 +46,76 @@ std::string getDefaultAvatarUrlLegacy(const std::string &discriminator) {
 }
 
 std::string getUserBannerUrl(const std::string &userId, const std::string &bannerHash, int size) {
+    int normalizedSize = normalizeSize(size);
     std::string ext = getImageExtension(bannerHash);
     std::ostringstream url;
-    url << CDN_BASE << "/banners/" << userId << "/" << bannerHash << ext << "?size=" << size;
+    url << CDN_BASE << "/banners/" << userId << "/" << bannerHash << ext << "?size=" << normalizedSize;
     return url.str();
 }
 
 std::string getGuildIconUrl(const std::string &guildId, const std::string &iconHash, int size, bool preferWebp) {
+    int normalizedSize = normalizeSize(size);
     std::string ext = getImageExtension(iconHash, preferWebp);
     std::ostringstream url;
-    url << CDN_BASE << "/icons/" << guildId << "/" << iconHash << ext << "?size=" << size;
+    url << CDN_BASE << "/icons/" << guildId << "/" << iconHash << ext << "?size=" << normalizedSize;
     return url.str();
 }
 
 std::string getGuildSplashUrl(const std::string &guildId, const std::string &splashHash, int size) {
+    int normalizedSize = normalizeSize(size);
     std::string ext = getImageExtension(splashHash);
     std::ostringstream url;
-    url << CDN_BASE << "/splashes/" << guildId << "/" << splashHash << ext << "?size=" << size;
+    url << CDN_BASE << "/splashes/" << guildId << "/" << splashHash << ext << "?size=" << normalizedSize;
     return url.str();
 }
 
 std::string getGuildDiscoverySplashUrl(const std::string &guildId, const std::string &discoverySplashHash, int size) {
+    int normalizedSize = normalizeSize(size);
     std::string ext = getImageExtension(discoverySplashHash);
     std::ostringstream url;
-    url << CDN_BASE << "/discovery-splashes/" << guildId << "/" << discoverySplashHash << ext << "?size=" << size;
+    url << CDN_BASE << "/discovery-splashes/" << guildId << "/" << discoverySplashHash << ext << "?size=" << normalizedSize;
     return url.str();
 }
 
 std::string getGuildBannerUrl(const std::string &guildId, const std::string &bannerHash, int size) {
+    int normalizedSize = normalizeSize(size);
     std::string ext = getImageExtension(bannerHash);
     std::ostringstream url;
-    url << CDN_BASE << "/banners/" << guildId << "/" << bannerHash << ext << "?size=" << size;
+    url << CDN_BASE << "/banners/" << guildId << "/" << bannerHash << ext << "?size=" << normalizedSize;
     return url.str();
 }
 
 std::string getMemberAvatarUrl(const std::string &guildId, const std::string &userId, const std::string &avatarHash,
                                int size) {
+    int normalizedSize = normalizeSize(size);
     std::string ext = getImageExtension(avatarHash);
     std::ostringstream url;
     url << CDN_BASE << "/guilds/" << guildId << "/users/" << userId << "/avatars/" << avatarHash << ext
-        << "?size=" << size;
+        << "?size=" << normalizedSize;
     return url.str();
 }
 
 std::string getEmojiUrl(const std::string &emojiId, bool animated, int size) {
+    int normalizedSize = normalizeSize(size);
     std::string ext = animated ? ".gif" : ".webp";
     std::ostringstream url;
-    url << CDN_BASE << "/emojis/" << emojiId << ext << "?size=" << size;
+    url << CDN_BASE << "/emojis/" << emojiId << ext << "?size=" << normalizedSize;
     return url.str();
 }
 
 std::string getRoleIconUrl(const std::string &roleId, const std::string &iconHash, int size) {
+    int normalizedSize = normalizeSize(size);
     std::string ext = getImageExtension(iconHash);
     std::ostringstream url;
-    url << CDN_BASE << "/role-icons/" << roleId << "/" << iconHash << ext << "?size=" << size;
+    url << CDN_BASE << "/role-icons/" << roleId << "/" << iconHash << ext << "?size=" << normalizedSize;
     return url.str();
 }
 
 std::string getChannelIconUrl(const std::string &channelId, const std::string &iconHash, int size) {
+    int normalizedSize = normalizeSize(size);
     std::string ext = getImageExtension(iconHash);
     std::ostringstream url;
-    url << CDN_BASE << "/channel-icons/" << channelId << "/" << iconHash << ext << "?size=" << size;
+    url << CDN_BASE << "/channel-icons/" << channelId << "/" << iconHash << ext << "?size=" << normalizedSize;
     return url.str();
 }
 

@@ -72,7 +72,7 @@ void GuildBar::subscribeToStore() {
 
 void GuildBar::refresh() {
     const AppState state = Store::get().snapshot();
-    const int iconSize = 48;
+    const int iconSize = m_iconSize;
     const int spacing = 8;
     const int guildBarWidth = w();
     const int iconMargin = (guildBarWidth - iconSize) / 2;
@@ -105,7 +105,18 @@ void GuildBar::refresh() {
         if (m_onHomeClicked) {
             home->setOnClickCallback(m_onHomeClicked);
         }
-        auto *logoIcon = IconManager::load_icon("discord", 32);
+
+        int discordIconSize = 16;
+        if (iconSize >= 128)
+            discordIconSize = 128;
+        else if (iconSize >= 64)
+            discordIconSize = 64;
+        else if (iconSize >= 48)
+            discordIconSize = 48;
+        else if (iconSize >= 32)
+            discordIconSize = 32;
+
+        auto *logoIcon = IconManager::load_recolored_icon("discord", discordIconSize, ThemeColors::BRAND_ON_PRIMARY);
         if (logoIcon) {
             home->image(logoIcon);
         }
@@ -182,7 +193,7 @@ void GuildBar::refresh() {
 }
 
 void GuildBar::repositionChildren() {
-    const int iconSize = 48;
+    const int iconSize = m_iconSize;
     const int spacing = 8;
     const int guildBarWidth = w();
     const int iconMargin = (guildBarWidth - iconSize) / 2;
@@ -248,7 +259,7 @@ int GuildBar::handle(int event) {
             return Fl_Group::handle(event);
         }
 
-        const int iconSize = 48;
+        const int iconSize = m_iconSize;
         const int spacing = 8;
         const int guildBarWidth = w();
         const int iconMargin = (guildBarWidth - iconSize) / 2;

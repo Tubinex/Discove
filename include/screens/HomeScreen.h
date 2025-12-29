@@ -25,6 +25,7 @@ class HomeScreen : public Screen {
     static constexpr int GUILD_BAR_WIDTH = 72;
     static constexpr int SIDEBAR_WIDTH = 302;
     static constexpr int PROFILE_HEIGHT = 74;
+    static constexpr int GUILDBAR_BOTTOM_PADDING = -8;
 
     GuildBar *m_guildBar = nullptr;
     Sidebar *m_sidebar = nullptr;
