@@ -3,8 +3,8 @@
 #include "router/Screen.h"
 #include "state/Store.h"
 #include "ui/components/GuildBar.h"
+#include "ui/components/GuildSidebar.h"
 #include "ui/components/ProfileBubble.h"
-#include "ui/components/Sidebar.h"
 
 class HomeScreen : public Screen {
   public:
@@ -28,7 +28,7 @@ class HomeScreen : public Screen {
     static constexpr int GUILDBAR_BOTTOM_PADDING = -8;
 
     GuildBar *m_guildBar = nullptr;
-    Sidebar *m_sidebar = nullptr;
+    GuildSidebar *m_sidebar = nullptr;
     ProfileBubble *m_profileBubble = nullptr;
 
     Store::ListenerId m_userProfileListenerId = 0;

@@ -18,8 +18,8 @@ class GuildBar : public Fl_Group {
     void draw() override;
     void repositionChildren();
 
-    void setOnGuildSelected(std::function<void(const std::string &)> cb) { m_onGuildSelected = std::move(cb); }
-    void setOnHomeClicked(std::function<void()> cb) { m_onHomeClicked = std::move(cb); }
+    void setOnGuildSelected(std::function<void(const std::string &)> cb);
+    void setOnHomeClicked(std::function<void()> cb);
     void setIconSize(int size) {
         m_iconSize = size;
         refresh();

@@ -21,6 +21,7 @@
 #include "screens/HomeScreen.h"
 #include "screens/LoadingScreen.h"
 #include "screens/LoginScreen.h"
+#include "screens/MainLayoutScreen.h"
 #include "screens/NotFoundScreen.h"
 #include "screens/ProfileScreen.h"
 #include "screens/SettingsScreen.h"
@@ -57,7 +58,15 @@ int main(int argc, char **argv) {
     window->begin();
     window->add(&router);
 
-    router.addRoute("/", [](int x, int y, int w, int h) { return std::make_unique<HomeScreen>(x, y, w, h); });
+    // Channel routes - ALL use the same "channels" reuse key for screen reuse
+    auto channelFactory = [](int x, int y, int w, int h) { return std::make_unique<MainLayoutScreen>(x, y, w, h); };
+
+    router.addRoute("/channels/me", channelFactory, "channels");
+    router.addRoute("/channels/:dmId", channelFactory, "channels");
+    router.addRoute("/channels/:guildId/:channelId", channelFactory, "channels");
+    router.addRoute("/", channelFactory, "channels");
+
+    // Other routes (no reuse keys)
     router.addRoute("/loading", [](int x, int y, int w, int h) { return std::make_unique<LoadingScreen>(x, y, w, h); });
     router.addRoute("/login", [](int x, int y, int w, int h) { return std::make_unique<LoginScreen>(x, y, w, h); });
     router.addRoute("/settings",
@@ -86,14 +95,18 @@ int main(int argc, char **argv) {
     [[maybe_unused]] static auto readySub = gateway.subscribe(
         "READY",
         [&router, &gateway](const Gateway::Json &message) {
+            Logger::debug("READY event handler called");
             bool wasAuthenticated = gateway.isAuthenticated();
+            Logger::debug("wasAuthenticated: " + std::string(wasAuthenticated ? "true" : "false"));
             gateway.setAuthenticated(true);
 
             if (wasAuthenticated) {
                 Logger::info("Session reconnected - received fresh READY event");
             } else {
                 Logger::info("Authentication successful! Received READY event");
-                router.navigate("/");
+                Logger::debug("About to navigate to /channels/me");
+                router.navigate("/channels/me");
+                Logger::debug("Navigation to /channels/me completed");
             }
         },
         true);

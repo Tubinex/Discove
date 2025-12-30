@@ -219,4 +219,120 @@ bool parseGuildFoldersProto(const std::string &base64, std::vector<ParsedFolder>
     return true;
 }
 
+bool parseStatusProto(const std::string &base64, ParsedStatus &statusOut) {
+    std::vector<uint8_t> bytes;
+    if (!base64Decode(base64, bytes)) {
+        return false;
+    }
+
+    std::vector<uint8_t> statusSettingsBytes;
+    size_t idx = 0;
+
+    while (idx < bytes.size()) {
+        uint64_t key;
+        if (!readVarint(bytes, idx, key))
+            break;
+        const uint32_t field = static_cast<uint32_t>(key >> 3);
+        const uint32_t wire = static_cast<uint32_t>(key & 7);
+
+        if (wire == 0) {
+            uint64_t dummy;
+            if (!readVarint(bytes, idx, dummy))
+                break;
+        } else if (wire == 1) {
+            idx += 8;
+        } else if (wire == 5) {
+            idx += 4;
+        } else if (wire == 2) {
+            uint64_t len;
+            if (!readVarint(bytes, idx, len) || idx + len > bytes.size())
+                break;
+
+            if (field == 11) {
+                statusSettingsBytes.assign(bytes.begin() + idx, bytes.begin() + idx + static_cast<size_t>(len));
+                break;
+            }
+            idx += static_cast<size_t>(len);
+        } else {
+            break;
+        }
+    }
+
+    if (statusSettingsBytes.empty()) {
+        return false;
+    }
+
+    std::vector<uint8_t> stringValueBytes;
+    size_t pos = 0;
+    while (pos < statusSettingsBytes.size()) {
+        uint64_t key;
+        if (!readVarint(statusSettingsBytes, pos, key))
+            break;
+        const uint32_t field = static_cast<uint32_t>(key >> 3);
+        const uint32_t wire = static_cast<uint32_t>(key & 7);
+
+        if (wire == 0) {
+            uint64_t dummy;
+            if (!readVarint(statusSettingsBytes, pos, dummy))
+                break;
+        } else if (wire == 1) {
+            pos += 8;
+        } else if (wire == 5) {
+            pos += 4;
+        } else if (wire == 2) {
+            uint64_t len;
+            if (!readVarint(statusSettingsBytes, pos, len) || pos + len > statusSettingsBytes.size())
+                break;
+
+            if (field == 1) {
+                stringValueBytes.assign(statusSettingsBytes.begin() + pos,
+                                        statusSettingsBytes.begin() + pos + static_cast<size_t>(len));
+                break;
+            }
+            pos += static_cast<size_t>(len);
+        } else {
+            break;
+        }
+    }
+
+    if (stringValueBytes.empty()) {
+        return false;
+    }
+
+    size_t svPos = 0;
+    while (svPos < stringValueBytes.size()) {
+        uint64_t key;
+        if (!readVarint(stringValueBytes, svPos, key))
+            break;
+        const uint32_t field = static_cast<uint32_t>(key >> 3);
+        const uint32_t wire = static_cast<uint32_t>(key & 7);
+
+        if (wire == 0) {
+            uint64_t dummy;
+            if (!readVarint(stringValueBytes, svPos, dummy))
+                break;
+        } else if (wire == 1) {
+            svPos += 8;
+        } else if (wire == 5) {
+            svPos += 4;
+        } else if (wire == 2) {
+            uint64_t len;
+            if (!readVarint(stringValueBytes, svPos, len) || svPos + len > stringValueBytes.size())
+                break;
+
+            if (field == 1) {
+                statusOut.status.assign(reinterpret_cast<const char *>(stringValueBytes.data() + svPos),
+                                        static_cast<size_t>(len));
+                statusOut.found = true;
+                return true;
+            }
+            svPos += static_cast<size_t>(len);
+        } else {
+            break;
+        }
+    }
+
+    return statusOut.found;
+}
+
 } // namespace ProtobufUtils

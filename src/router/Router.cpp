@@ -26,9 +26,9 @@ Router &Router::get() {
     return instance;
 }
 
-void Router::addRoute(const std::string &path, Route::ScreenFactory factory) {
-    m_routes.emplace_back(path, std::move(factory));
-    Logger::debug("Route added: " + path);
+void Router::addRoute(const std::string &path, Route::ScreenFactory factory, const std::string &reuseKey) {
+    m_routes.emplace_back(path, std::move(factory), reuseKey);
+    Logger::debug("Route added: " + path + (reuseKey.empty() ? "" : " (reuse key: " + reuseKey + ")"));
 }
 
 void Router::setNotFoundFactory(Route::ScreenFactory factory) { m_notFoundFactory = std::move(factory); }
@@ -46,8 +46,7 @@ void Router::start(const std::string &initialPath) {
 
     m_routeSubscription = Store::get().subscribe<RouteState>(
         [](const AppState &state) { return state.route; },
-        [this](const RouteState &newRoute) { handleRouteChange(newRoute); },
-        std::equal_to<RouteState>{}, false);
+        [this](const RouteState &newRoute) { handleRouteChange(newRoute); }, std::equal_to<RouteState>{}, false);
 
     m_initialized = true;
     navigate(initialPath);
@@ -68,9 +67,7 @@ void Router::navigate(const std::string &path) {
     });
 }
 
-void Router::push(const std::string &path) {
-    navigate(path);
-}
+void Router::push(const std::string &path) { navigate(path); }
 
 void Router::replace(const std::string &path) {
     updateRouteState([&](RouteState &r) {
@@ -125,14 +122,50 @@ void Router::handleRouteChange(const RouteState &newRoute) {
 
 void Router::performNavigation(const std::string &toPath) {
     RouteMatch match;
+    const Route *route = findRoute(toPath);
+
+    if (!route) {
+        Logger::error("No route found for path: " + toPath);
+        return;
+    }
+
+    std::string newReuseKey = route->reuseKey();
+    if (m_currentScreen && !m_currentReuseKey.empty() && m_currentReuseKey == newReuseKey && !newReuseKey.empty()) {
+
+        Logger::info("Reusing screen for route: " + toPath);
+        match = route->match(toPath);
+
+        m_currentScreen->onExit();
+
+        Screen::Context newContext;
+        newContext.path = toPath;
+        newContext.params = std::move(match.params);
+
+        AppState state = Store::get().snapshot();
+        newContext.query = state.route.query;
+
+        m_currentScreen->setContext(newContext);
+        m_currentScreen->onEnter(newContext);
+        m_currentReuseKey = newReuseKey;
+
+        damage(FL_DAMAGE_ALL);
+        if (parent()) {
+            parent()->damage(FL_DAMAGE_ALL);
+            parent()->redraw();
+        }
+        redraw();
+
+        return;
+    }
+
+    Logger::info("Creating new screen for route: " + toPath);
+
     Screen *newScreen = createScreenForPath(toPath, match);
 
     if (!newScreen) {
         Logger::error("Failed to create screen for path: " + toPath);
         return;
     }
-
-    Logger::info("Navigating to: " + toPath);
 
     Screen::Context ctx;
     ctx.path = toPath;
@@ -145,6 +178,8 @@ void Router::performNavigation(const std::string &toPath) {
     m_nextScreen->setContext(ctx);
     m_nextScreen->onCreate(ctx);
     m_nextScreen->onEnter(ctx);
+
+    m_currentReuseKey = newReuseKey;
 
     if (m_currentScreen) {
         if (m_transitionDuration > 0.0) {

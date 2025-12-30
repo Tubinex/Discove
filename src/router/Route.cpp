@@ -2,7 +2,8 @@
 #include "router/Screen.h"
 #include "utils/Logger.h"
 
-Route::Route(std::string path, ScreenFactory factory) : m_path(std::move(path)), m_factory(std::move(factory)) {
+Route::Route(std::string path, ScreenFactory factory, std::string reuseKey)
+    : m_path(std::move(path)), m_reuseKey(std::move(reuseKey)), m_factory(std::move(factory)) {
     compilePath();
 }
 

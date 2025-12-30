@@ -137,6 +137,7 @@ class Gateway {
     void handleReady(const Json &data);
     void handleReadySupplemental(const Json &data);
     void handleMessageCreate(const Json &data);
+    void handleUserSettingsProtoUpdate(const Json &data);
 
     void handleHello(const Json &data);
     void handleReconnect(const Json &data);
@@ -144,6 +145,9 @@ class Gateway {
     void startHeartbeat(int intervalMs);
     void sendHeartbeat();
     void stopHeartbeat();
+
+    void logMessage(const Json &msg);
+    void logUnhandledEvent(const std::string &eventType);
 
   private:
     struct AnySub {

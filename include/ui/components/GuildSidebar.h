@@ -6,9 +6,10 @@
 #include <string>
 #include <vector>
 
-class Sidebar : public Fl_Group {
+class GuildSidebar : public Fl_Group {
   public:
-    Sidebar(int x, int y, int w, int h, const char *label = nullptr);
+    GuildSidebar(int x, int y, int w, int h, const char *label = nullptr);
+    ~GuildSidebar();
 
     void draw() override;
     int handle(int event) override;
@@ -19,6 +20,12 @@ class Sidebar : public Fl_Group {
      * @param guildName Guild name
      */
     void setGuild(const std::string &guildId, const std::string &guildName);
+
+    /**
+     * @brief Set the guild ID and load channels from Store
+     * @param guildId Guild ID
+     */
+    void setGuildId(const std::string &guildId);
 
     /**
      * @brief Add a text channel to the sidebar
@@ -59,6 +66,8 @@ class Sidebar : public Fl_Group {
         bool hasUnread = false;
         int yPos = 0;
     };
+
+    void loadChannelsFromStore();
 
     std::string m_guildId;
     std::string m_guildName;

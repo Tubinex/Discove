@@ -22,7 +22,7 @@ void HomeScreen::setupUI() {
     begin();
 
     m_guildBar = new GuildBar(0, 0, GUILD_BAR_WIDTH, h() - PROFILE_HEIGHT - GUILDBAR_BOTTOM_PADDING);
-    m_sidebar = new Sidebar(GUILD_BAR_WIDTH, 0, SIDEBAR_WIDTH, h() - PROFILE_HEIGHT - GUILDBAR_BOTTOM_PADDING);
+    m_sidebar = new GuildSidebar(GUILD_BAR_WIDTH, 0, SIDEBAR_WIDTH, h() - PROFILE_HEIGHT - GUILDBAR_BOTTOM_PADDING);
 
     m_profileBubble = new ProfileBubble(0, h() - PROFILE_HEIGHT, GUILD_BAR_WIDTH + SIDEBAR_WIDTH, PROFILE_HEIGHT);
 
@@ -38,9 +38,7 @@ void HomeScreen::setupUI() {
     m_profileBubble->setStatus("online");
 
     m_profileBubble->setOnMicrophoneClicked([]() { Logger::info("Microphone toggled"); });
-
     m_profileBubble->setOnHeadphonesClicked([]() { Logger::info("Headphones toggled"); });
-
     m_profileBubble->setOnSettingsClicked([]() { Logger::info("Settings clicked"); });
 
     end();

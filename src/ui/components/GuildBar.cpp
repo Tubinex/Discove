@@ -81,6 +81,42 @@ GuildBar::~GuildBar() {
     }
 }
 
+void GuildBar::setOnHomeClicked(std::function<void()> cb) {
+    m_onHomeClicked = std::move(cb);
+    if (children() > 0) {
+        auto *homeIcon = dynamic_cast<HomeIcon *>(child(0));
+        if (homeIcon && m_onHomeClicked) {
+            homeIcon->setOnClickCallback(m_onHomeClicked);
+        }
+    }
+}
+
+void GuildBar::setOnGuildSelected(std::function<void(const std::string &)> cb) {
+    m_onGuildSelected = std::move(cb);
+
+    // Update callbacks on existing guild icons
+    for (int i = 0; i < children(); i++) {
+        auto *widget = child(i);
+
+        // Check if it's a direct GuildIcon
+        if (auto *icon = dynamic_cast<GuildIcon *>(widget)) {
+            if (m_onGuildSelected) {
+                icon->setOnClickCallback(m_onGuildSelected);
+            }
+        }
+        // Check if it's a GuildFolderWidget containing icons
+        else if (auto *folder = dynamic_cast<GuildFolderWidget *>(widget)) {
+            for (int j = 0; j < folder->children(); j++) {
+                if (auto *icon = dynamic_cast<GuildIcon *>(folder->child(j))) {
+                    if (m_onGuildSelected) {
+                        icon->setOnClickCallback(m_onGuildSelected);
+                    }
+                }
+            }
+        }
+    }
+}
+
 void GuildBar::draw() {
     draw_box();
     draw_children();

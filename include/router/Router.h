@@ -14,7 +14,7 @@ class Router : public Fl_Group {
   public:
     static Router &get();
 
-    void addRoute(const std::string &path, Route::ScreenFactory factory);
+    void addRoute(const std::string &path, Route::ScreenFactory factory, const std::string &reuseKey = "");
     void setNotFoundFactory(Route::ScreenFactory factory);
     void setTransitionDuration(double seconds);
 
@@ -51,9 +51,10 @@ class Router : public Fl_Group {
 
     Screen *m_currentScreen = nullptr;
     Screen *m_nextScreen = nullptr;
+    std::string m_currentReuseKey;
 
     std::unique_ptr<Transition> m_transition;
-    double m_transitionDuration = 0.0; // seconds (0 = instant, >0 = animated)
+    double m_transitionDuration = 0.0;
 
     Store::ListenerId m_routeSubscription;
     bool m_initialized;

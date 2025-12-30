@@ -39,6 +39,11 @@ constexpr Fl_Color PROFILE_BUTTON_ACTIVE_HOVER_BASE = 0x362127FF;
 constexpr Fl_Color PROFILE_BUTTON_ACTIVE_HOVER_STRONG = 0x452126FF;
 constexpr Fl_Color STATUS_DANGER = 0xF04747FF;
 
+constexpr Fl_Color STATUS_ONLINE = 0x23a55aFF;
+constexpr Fl_Color STATUS_IDLE = 0xf0b232FF;
+constexpr Fl_Color STATUS_DND = 0xf23f43FF;
+constexpr Fl_Color STATUS_OFFLINE = 0x80848eFF;
+
 inline constexpr unsigned char red(Fl_Color color) { return (color >> 24) & 0xFF; }
 inline constexpr unsigned char green(Fl_Color color) { return (color >> 16) & 0xFF; }
 inline constexpr unsigned char blue(Fl_Color color) { return (color >> 8) & 0xFF; }

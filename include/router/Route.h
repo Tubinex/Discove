@@ -20,17 +20,19 @@ class Route {
   public:
     using ScreenFactory = std::function<std::unique_ptr<Screen>(int x, int y, int w, int h)>;
 
-    Route(std::string path, ScreenFactory factory);
+    Route(std::string path, ScreenFactory factory, std::string reuseKey = "");
 
     RouteMatch match(const std::string &path) const;
     std::unique_ptr<Screen> createScreen(int x, int y, int w, int h) const;
 
     const std::string &path() const { return m_path; }
+    const std::string &reuseKey() const { return m_reuseKey; }
 
   private:
     void compilePath();
 
     std::string m_path;
+    std::string m_reuseKey;
     std::regex m_regex;
     std::vector<std::string> m_paramNames;
     ScreenFactory m_factory;

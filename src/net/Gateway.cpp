@@ -263,6 +263,7 @@ void Gateway::receive(const std::string &text) {
         return;
     }
 
+    logMessage(msg);
     auto seqIt = msg.find("s");
     if (seqIt != msg.end() && seqIt->is_number()) {
         m_lastSequence.store(seqIt->get<int>());
@@ -273,21 +274,32 @@ void Gateway::receive(const std::string &text) {
         int opcode = opIt->get<int>();
         auto dataIt = msg.find("d");
 
-        if (opcode == 10 && dataIt != msg.end()) {
-            // HELLO
-            handleHello(*dataIt);
-        } else if (opcode == 11) {
-            // HEARTBEAT_ACK
+        switch (opcode) {
+        case 10: // HELLO
+            if (dataIt != msg.end()) {
+                handleHello(*dataIt);
+            }
+            break;
+
+        case 11: // HEARTBEAT_ACK
             m_heartbeatAcked.store(true);
             Logger::debug("Received heartbeat ACK");
-        } else if (opcode == 7) {
-            // RECONNECT
+            break;
+
+        case 7: // RECONNECT
             Logger::warn("Received RECONNECT opcode from Discord");
             handleReconnect(dataIt != msg.end() ? *dataIt : Json::object());
-        } else if (opcode == 9 && dataIt != msg.end()) {
-            // INVALID_SESSION
-            Logger::warn("Received INVALID_SESSION opcode from Discord");
-            handleInvalidSession(*dataIt);
+            break;
+
+        case 9: // INVALID_SESSION
+            if (dataIt != msg.end()) {
+                Logger::warn("Received INVALID_SESSION opcode from Discord");
+                handleInvalidSession(*dataIt);
+            }
+            break;
+
+        default:
+            break;
         }
     }
 
@@ -296,14 +308,20 @@ void Gateway::receive(const std::string &text) {
         const std::string eventType = it->get<std::string>();
         auto dataIt = msg.find("d");
         if (dataIt != msg.end() && dataIt->is_object()) {
-            if (eventType == "READY") {
-                handleReady(*dataIt);
-            } else if (eventType == "READY_SUPPLEMENTAL") {
-                handleReadySupplemental(*dataIt);
-            } else if (eventType == "MESSAGE_CREATE") {
-                handleMessageCreate(*dataIt);
-            } else if (eventType == "RESUMED") {
-                Logger::info("Session successfully resumed");
+            static const std::unordered_map<std::string, std::function<void(Gateway *, const Json &)>> eventHandlers = {
+                {"READY", [](Gateway *gw, const Json &data) { gw->handleReady(data); }},
+                {"READY_SUPPLEMENTAL", [](Gateway *gw, const Json &data) { gw->handleReadySupplemental(data); }},
+                {"MESSAGE_CREATE", [](Gateway *gw, const Json &data) { gw->handleMessageCreate(data); }},
+                {"USER_SETTINGS_PROTO_UPDATE",
+                 [](Gateway *gw, const Json &data) { gw->handleUserSettingsProtoUpdate(data); }},
+                {"RESUMED", [](Gateway *, const Json &) { Logger::info("Session successfully resumed"); }},
+            };
+
+            auto handlerIt = eventHandlers.find(eventType);
+            if (handlerIt != eventHandlers.end()) {
+                handlerIt->second(this, *dataIt);
+            } else {
+                logUnhandledEvent(eventType);
             }
         }
     }
@@ -416,8 +434,6 @@ void Gateway::handleReady(const Json &data) {
         std::vector<uint64_t> positions;
 
         if (ProtobufUtils::parseGuildFoldersProto(base64Proto, folders, positions)) {
-            Logger::info("Parsed " + std::to_string(folders.size()) + " guild folders and " +
-                         std::to_string(positions.size()) + " guild positions");
 
             Store::get().update([&folders, &positions](AppState &appState) {
                 appState.guildFolders.clear();
@@ -430,8 +446,8 @@ void Gateway::handleReady(const Json &data) {
                 appState.guildPositions = positions;
             });
 
-            Logger::info("Stored " + std::to_string(folders.size()) + " guild folders and " +
-                         std::to_string(positions.size()) + " guild positions in AppState");
+            Logger::debug("Stored " + std::to_string(folders.size()) + " guild folders and " +
+                          std::to_string(positions.size()) + " guild positions in AppState");
         } else {
             Logger::warn("Failed to parse user_settings_proto guild folders");
         }
@@ -562,6 +578,7 @@ void Gateway::handleReady(const Json &data) {
     std::vector<GuildInfo> guildsForState;
 
     if (data.contains("guilds") && data["guilds"].is_array()) {
+        Logger::debug("Found guilds array with " + std::to_string(data["guilds"].size()) + " guilds");
         for (const auto &guildJson : data["guilds"]) {
             GuildSummary guild;
             GuildInfo guildInfo;
@@ -750,6 +767,61 @@ void Gateway::handleMessageCreate(const Json &data) {
     // TODO: When DataStore is implemented, store the message:
     // m_dataStore->upsertUser(authorId, authorUsername, authorDiscriminator, isBot, authorGlobalName, authorAvatar);
     // m_dataStore->upsertMessage(messageId, channelId, authorId, content, timestampMs);
+}
+
+void Gateway::handleUserSettingsProtoUpdate(const Json &data) {
+    std::string base64Proto;
+    if (data.contains("settings") && data["settings"].is_object()) {
+        const auto &settings = data["settings"];
+
+        if (settings.contains("proto") && settings["proto"].is_string()) {
+            base64Proto = settings["proto"].get<std::string>();
+
+            int settingsType = -1;
+            if (settings.contains("type") && settings["type"].is_number()) {
+                settingsType = settings["type"].get<int>();
+            }
+
+            ProtobufUtils::ParsedStatus status;
+            bool statusParsed = ProtobufUtils::parseStatusProto(base64Proto, status);
+
+            Logger::debug("Status parsing result: " + std::string(statusParsed ? "success" : "failed") +
+                          (statusParsed ? ", status=" + status.status : ""));
+
+            if (statusParsed) {
+                Store::get().update([&status](AppState &appState) {
+                    if (appState.currentUser.has_value()) {
+                        appState.currentUser->status = status.status;
+                    }
+                });
+
+                Logger::info("Updated user status to: " + status.status);
+            }
+
+            std::vector<ProtobufUtils::ParsedFolder> folders;
+            std::vector<uint64_t> positions;
+
+            if (ProtobufUtils::parseGuildFoldersProto(base64Proto, folders, positions)) {
+                Store::get().update([&folders, &positions](AppState &appState) {
+                    appState.guildFolders.clear();
+                    appState.guildFolders.reserve(folders.size());
+
+                    for (const auto &parsedFolder : folders) {
+                        appState.guildFolders.push_back(GuildFolder::fromProtobuf(parsedFolder));
+                    }
+
+                    appState.guildPositions = positions;
+                });
+
+                Logger::info("Updated AppState with new guild folders from proto update");
+            }
+
+            if (!statusParsed && folders.empty()) {
+                Logger::debug(
+                    "Proto update contained neither status nor guild folders (may contain other settings data)");
+            }
+        }
+    }
 }
 
 void Gateway::handleHello(const Json &data) {
@@ -942,4 +1014,37 @@ void Gateway::reconnect(bool resume) {
             },
             new std::pair<Gateway *, std::string>(this, url));
     });
+}
+
+void Gateway::logMessage(const Json &msg) {
+    try {
+        std::filesystem::create_directories("discove");
+        std::ofstream file("discove/gateway_messages.jsonl", std::ios::app);
+        if (file.is_open()) {
+            file << msg.dump() << "\n";
+            file.close();
+        }
+    } catch (const std::exception &e) {
+        Logger::error(std::string("Failed to log gateway message: ") + e.what());
+    }
+}
+
+void Gateway::logUnhandledEvent(const std::string &eventType) {
+    Logger::warn("Unhandled event type: " + eventType);
+
+    try {
+        std::filesystem::create_directories("discove");
+        std::ofstream file("discove/unhandled_events.log", std::ios::app);
+        if (file.is_open()) {
+            auto now = std::chrono::system_clock::now();
+            auto time = std::chrono::system_clock::to_time_t(now);
+            std::string timeStr = std::ctime(&time);
+            timeStr.pop_back();
+
+            file << "[" << timeStr << "] Unhandled event: " << eventType << "\n";
+            file.close();
+        }
+    } catch (const std::exception &e) {
+        Logger::error(std::string("Failed to log unhandled event: ") + e.what());
+    }
 }
