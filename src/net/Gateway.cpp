@@ -15,6 +15,73 @@
 #include <sstream>
 #include <utility>
 
+static int lwsCallback(lws *wsi, lws_callback_reasons reason, void *user, void *in, size_t len) {
+    Gateway *gateway = static_cast<Gateway *>(lws_context_user(lws_get_context(wsi)));
+    if (!gateway)
+        return 0;
+
+    switch (reason) {
+    case LWS_CALLBACK_CLIENT_ESTABLISHED:
+        Logger::info("WebSocket connected");
+        gateway->m_connected.store(true);
+        gateway->m_wsi = wsi;
+        gateway->notifyConnectionState(Gateway::ConnectionState::Connected);
+        break;
+
+    case LWS_CALLBACK_CLIENT_RECEIVE: {
+        if (in && len > 0) {
+            gateway->m_receiveBuffer.append(static_cast<char *>(in), len);
+
+            if (lws_is_final_fragment(wsi)) {
+                gateway->receive(gateway->m_receiveBuffer);
+                gateway->m_receiveBuffer.clear();
+            }
+        }
+        break;
+    }
+
+    case LWS_CALLBACK_CLIENT_WRITEABLE: {
+        std::scoped_lock lock(gateway->m_sendMutex);
+        if (!gateway->m_sendQueue.empty()) {
+            std::string &msg = gateway->m_sendQueue.front();
+
+            std::vector<unsigned char> buf(LWS_PRE + msg.size());
+            memcpy(&buf[LWS_PRE], msg.data(), msg.size());
+
+            int written = lws_write(wsi, &buf[LWS_PRE], msg.size(), LWS_WRITE_TEXT);
+            if (written == static_cast<int>(msg.size())) {
+                gateway->m_sendQueue.pop();
+
+                if (!gateway->m_sendQueue.empty()) {
+                    lws_callback_on_writable(wsi);
+                }
+            }
+        }
+        break;
+    }
+
+    case LWS_CALLBACK_CLIENT_CONNECTION_ERROR:
+        Logger::error(std::string("WebSocket connection error: ") + (in ? static_cast<char *>(in) : "unknown"));
+        gateway->m_connected.store(false);
+        gateway->m_wsi = nullptr;
+        gateway->notifyConnectionState(Gateway::ConnectionState::Disconnected);
+        break;
+
+    case LWS_CALLBACK_CLIENT_CLOSED:
+    case LWS_CALLBACK_WSI_DESTROY:
+        Logger::info("WebSocket closed");
+        gateway->m_connected.store(false);
+        gateway->m_wsi = nullptr;
+        gateway->notifyConnectionState(Gateway::ConnectionState::Disconnected);
+        break;
+
+    default:
+        break;
+    }
+
+    return 0;
+}
+
 Gateway *Gateway::s_instance = nullptr;
 
 Gateway &Gateway::get() {
@@ -24,15 +91,17 @@ Gateway &Gateway::get() {
     return *s_instance;
 }
 
-Gateway::Gateway() {
-    ix::initNetSystem();
-    m_ws.setPingInterval(0);
-    m_ws.disableAutomaticReconnection();
-}
+Gateway::Gateway() {}
 
 Gateway::~Gateway() {
     disconnect();
-    ix::uninitNetSystem();
+    if (m_serviceThread.joinable()) {
+        m_serviceThread.join();
+    }
+    if (m_lwsContext) {
+        lws_context_destroy(m_lwsContext);
+        m_lwsContext = nullptr;
+    }
 }
 
 bool Gateway::connect(const Options &opt) {
@@ -42,34 +111,58 @@ bool Gateway::connect(const Options &opt) {
     m_options = opt;
     m_shuttingDown.store(false);
 
-    m_ws.setUrl(m_options.url);
-    m_ws.setOnMessageCallback([this](const ix::WebSocketMessagePtr &msg) {
-        if (m_shuttingDown.load())
-            return;
+    std::string url = m_options.url;
+    bool useTLS = url.find("wss://") == 0;
+    size_t hostStart = useTLS ? 6 : 5;
+    size_t pathStart = url.find('/', hostStart);
+    std::string host = url.substr(hostStart, pathStart - hostStart);
+    std::string path = pathStart != std::string::npos ? url.substr(pathStart) : "/";
+    int port = useTLS ? 443 : 80;
 
-        switch (msg->type) {
-        case ix::WebSocketMessageType::Open:
-            m_connected.store(true);
-            notifyConnectionState(ConnectionState::Connected);
-            // Identity/Resume will be sent after receiving HELLO
-            break;
+    static const lws_protocols protocols[] = {{"discord-gateway", lwsCallback, 0, 65536, 0, nullptr, 0},
+                                              {nullptr, nullptr, 0, 0, 0, nullptr, 0}};
 
-        case ix::WebSocketMessageType::Message:
-            receive(msg->str);
-            break;
+    lws_context_creation_info info{};
+    memset(&info, 0, sizeof(info));
+    info.port = CONTEXT_PORT_NO_LISTEN;
+    info.protocols = protocols;
+    info.user = this;
+    info.options = LWS_SERVER_OPTION_DO_SSL_GLOBAL_INIT;
+    info.fd_limit_per_thread = 1 + 1 + 1;
 
-        case ix::WebSocketMessageType::Close:
-        case ix::WebSocketMessageType::Error:
-            m_connected.store(false);
-            notifyConnectionState(ConnectionState::Disconnected);
-            break;
+    m_lwsContext = lws_create_context(&info);
+    if (!m_lwsContext) {
+        Logger::error("Failed to create libwebsockets context");
+        return false;
+    }
 
-        default:
-            break;
+    lws_client_connect_info ccinfo{};
+    memset(&ccinfo, 0, sizeof(ccinfo));
+    ccinfo.context = m_lwsContext;
+    ccinfo.address = host.c_str();
+    ccinfo.port = port;
+    ccinfo.path = path.c_str();
+    ccinfo.host = host.c_str();
+    ccinfo.origin = host.c_str();
+    ccinfo.protocol = protocols[0].name;
+    ccinfo.ssl_connection = useTLS ? LCCSCF_USE_SSL : 0;
+
+    m_wsi = lws_client_connect_via_info(&ccinfo);
+    if (!m_wsi) {
+        Logger::error("Failed to create WebSocket connection");
+        lws_context_destroy(m_lwsContext);
+        m_lwsContext = nullptr;
+        return false;
+    }
+
+    m_serviceThread = std::thread([this]() {
+        Logger::info("libwebsockets service thread started");
+        while (!m_shuttingDown.load()) {
+            lws_service(m_lwsContext, 50);
         }
+        Logger::info("libwebsockets service thread stopped");
     });
 
-    m_ws.start();
     return true;
 }
 
@@ -80,14 +173,38 @@ void Gateway::disconnect() {
     stopHeartbeat();
     m_connected.store(false);
     notifyConnectionState(ConnectionState::Disconnected);
-    m_ws.stop();
-    m_ws.setOnMessageCallback(nullptr);
+
+    if (m_serviceThread.joinable()) {
+        m_serviceThread.join();
+    }
+
+    if (m_wsi) {
+        m_wsi = nullptr;
+    }
+
+    if (m_lwsContext) {
+        lws_context_destroy(m_lwsContext);
+        m_lwsContext = nullptr;
+    }
+
+    {
+        std::scoped_lock lock(m_sendMutex);
+        while (!m_sendQueue.empty()) {
+            m_sendQueue.pop();
+        }
+    }
 }
 
 void Gateway::send(const std::string &text) {
-    if (!m_connected.load())
+    if (!m_connected.load() || !m_wsi)
         return;
-    m_ws.send(text);
+
+    {
+        std::scoped_lock lock(m_sendMutex);
+        m_sendQueue.push(text);
+    }
+
+    lws_callback_on_writable(m_wsi);
 }
 
 void Gateway::send(const Json &j) { send(j.dump()); }
@@ -315,46 +432,6 @@ void Gateway::handleReady(const Json &data) {
 
             Logger::info("Stored " + std::to_string(folders.size()) + " guild folders and " +
                          std::to_string(positions.size()) + " guild positions in AppState");
-
-            try {
-                std::ofstream folderFile("discove/guild_folders.txt");
-                if (folderFile.is_open()) {
-                    folderFile << "Guild Folders (" << folders.size() << "):\n";
-                    folderFile << "=====================================\n\n";
-
-                    for (size_t i = 0; i < folders.size(); ++i) {
-                        const auto &folder = folders[i];
-                        folderFile << "Folder #" << (i + 1) << ":\n";
-                        folderFile << "  ID: " << folder.id << "\n";
-                        folderFile << "  Name: " << (folder.name.empty() ? "(unnamed)" : folder.name) << "\n";
-
-                        if (folder.hasColor) {
-                            std::ostringstream colorHex;
-                            colorHex << "#" << std::hex << std::uppercase << folder.color;
-                            folderFile << "  Color: " << colorHex.str() << "\n";
-                        } else {
-                            folderFile << "  Color: (default)\n";
-                        }
-
-                        folderFile << "  Guild IDs (" << folder.guildIds.size() << "):\n";
-                        for (const auto &gid : folder.guildIds) {
-                            folderFile << "    - " << gid << "\n";
-                        }
-                        folderFile << "\n";
-                    }
-
-                    folderFile << "\nGuild Positions (" << positions.size() << "):\n";
-                    folderFile << "=====================================\n";
-                    for (size_t i = 0; i < positions.size(); ++i) {
-                        folderFile << i + 1 << ". " << positions[i] << "\n";
-                    }
-
-                    folderFile.close();
-                    Logger::info("Guild folder data written to discove/guild_folders.txt");
-                }
-            } catch (const std::exception &e) {
-                Logger::error(std::string("Failed to write guild folders: ") + e.what());
-            }
         } else {
             Logger::warn("Failed to parse user_settings_proto guild folders");
         }
@@ -363,15 +440,12 @@ void Gateway::handleReady(const Json &data) {
     ReadyState state;
     if (data.contains("session_id") && data["session_id"].is_string()) {
         state.sessionId = data["session_id"].get<std::string>();
-
-        // Store session_id for resuming
         {
             std::scoped_lock lock(m_sessionMutex);
             m_sessionId = state.sessionId;
         }
     }
 
-    // Store resume_gateway_url if provided
     if (data.contains("resume_gateway_url") && data["resume_gateway_url"].is_string()) {
         std::scoped_lock lock(m_sessionMutex);
         m_resumeGatewayUrl = data["resume_gateway_url"].get<std::string>();
@@ -404,13 +478,76 @@ void Gateway::handleReady(const Json &data) {
 
     m_readyState = state;
 
-    Store::get().update([&state](AppState &appState) {
+    std::string userStatus = "online";
+    std::optional<CustomStatus> customStatus;
+
+    if (data.contains("sessions") && data["sessions"].is_array() && !data["sessions"].empty()) {
+        Logger::debug("Found sessions array with " + std::to_string(data["sessions"].size()) + " sessions");
+        const auto &session = data["sessions"][0];
+
+        if (session.contains("status") && session["status"].is_string()) {
+            userStatus = session["status"].get<std::string>();
+            Logger::debug("User status: " + userStatus);
+        }
+
+        if (session.contains("activities") && session["activities"].is_array()) {
+            Logger::debug("Found " + std::to_string(session["activities"].size()) + " activities");
+
+            for (const auto &activity : session["activities"]) {
+                if (activity.contains("type") && activity["type"].is_number() && activity["type"].get<int>() == 4) {
+                    Logger::debug("Found custom status activity (type 4)");
+
+                    CustomStatus cs;
+
+                    if (activity.contains("state") && activity["state"].is_string()) {
+                        cs.text = activity["state"].get<std::string>();
+                        Logger::debug("Custom status text: " + cs.text);
+                    }
+
+                    if (activity.contains("emoji") && activity["emoji"].is_object()) {
+                        const auto &emoji = activity["emoji"];
+                        if (emoji.contains("name") && emoji["name"].is_string()) {
+                            cs.emojiName = emoji["name"].get<std::string>();
+                            Logger::debug("Custom status emoji name: " + cs.emojiName);
+                        }
+                        if (emoji.contains("id") && emoji["id"].is_string()) {
+                            cs.emojiId = emoji["id"].get<std::string>();
+                            Logger::debug("Custom status emoji ID: " + cs.emojiId);
+                        }
+                        if (emoji.contains("animated") && emoji["animated"].is_boolean()) {
+                            cs.emojiAnimated = emoji["animated"].get<bool>();
+                            Logger::debug("Custom status emoji animated: " +
+                                          std::string(cs.emojiAnimated ? "true" : "false"));
+                        }
+
+                        if (!cs.emojiId.empty()) {
+                            std::string ext = cs.emojiAnimated ? "gif" : "png";
+                            cs.emojiUrl = "https://cdn.discordapp.com/emojis/" + cs.emojiId + "." + ext;
+                            Logger::info("Custom status emoji URL: " + cs.emojiUrl);
+                        }
+                    }
+
+                    if (!cs.isEmpty()) {
+                        customStatus = cs;
+                        Logger::info("Parsed custom status: text='" + cs.text + "', emojiUrl='" + cs.emojiUrl + "'");
+                    }
+                    break;
+                }
+            }
+        }
+    } else {
+        Logger::warn("No sessions found in READY message");
+    }
+
+    Store::get().update([&state, &userStatus, &customStatus](AppState &appState) {
         UserProfile profile;
         profile.id = state.userId;
         profile.username = state.username;
         profile.discriminator = state.discriminator;
         profile.globalName = state.globalName;
         profile.avatarHash = state.avatar;
+        profile.status = userStatus;
+        profile.customStatus = customStatus;
 
         if (!state.avatar.empty()) {
             profile.avatarUrl = CDNUtils::getUserAvatarUrl(state.userId, state.avatar);
@@ -622,7 +759,6 @@ void Gateway::handleHello(const Json &data) {
         startHeartbeat(interval);
     }
 
-    // Check if we can resume the session
     std::string sessionId;
     int lastSeq = m_lastSequence.load();
     {
@@ -631,12 +767,10 @@ void Gateway::handleHello(const Json &data) {
     }
 
     if (!sessionId.empty() && lastSeq > 0) {
-        // Send RESUME (opcode 6)
         Json resume;
         resume["op"] = 6;
         resume["d"] = {{"token", ""}, {"session_id", sessionId}, {"seq", lastSeq}};
 
-        // Get token from identity provider
         IdentityProvider identityProvider;
         {
             std::scoped_lock lock(m_identityMutex);
@@ -653,7 +787,6 @@ void Gateway::handleHello(const Json &data) {
         send(resume);
         Logger::info("Sent RESUME (session_id: " + sessionId + ", seq: " + std::to_string(lastSeq) + ")");
     } else {
-        // Send IDENTIFY (opcode 2)
         IdentityProvider identityProvider;
         {
             std::scoped_lock lock(m_identityMutex);
@@ -678,7 +811,7 @@ void Gateway::startHeartbeat(int intervalMs) {
     stopHeartbeat();
     m_heartbeatInterval.store(intervalMs);
     m_heartbeatRunning.store(true);
-    m_heartbeatAcked.store(true); // Reset ACK flag for new session
+    m_heartbeatAcked.store(true);
 
     Fl::add_timeout(static_cast<double>(intervalMs) / 1000.0, heartbeatTimerCallback, this);
     Logger::info("Started heartbeat with interval: " + std::to_string(intervalMs) + "ms");
@@ -689,14 +822,12 @@ void Gateway::sendHeartbeat() {
         return;
     }
 
-    // Check if previous heartbeat was acknowledged
     if (!m_heartbeatAcked.load()) {
         Logger::warn("Heartbeat ACK not received - connection may be zombied, reconnecting");
         dispatch([this]() { reconnect(true); });
         return;
     }
 
-    // Mark as waiting for ACK
     m_heartbeatAcked.store(false);
 
     Json heartbeat;
@@ -721,8 +852,6 @@ void Gateway::stopHeartbeat() {
 
 void Gateway::handleReconnect(const Json &data) {
     Logger::warn("Discord requested reconnect - attempting to resume session");
-    // Discord wants us to reconnect and resume the session
-    // We should close the connection and reconnect with resume
     dispatch([this]() { reconnect(true); });
 }
 
@@ -734,7 +863,6 @@ void Gateway::handleInvalidSession(const Json &data) {
 
     if (canResume) {
         Logger::warn("Session invalid but resumable - reconnecting with resume");
-        // Wait a bit before reconnecting as per Discord recommendations
         dispatch([this]() {
             Fl::add_timeout(
                 1.0 + (std::rand() % 5),
@@ -748,14 +876,12 @@ void Gateway::handleInvalidSession(const Json &data) {
         });
     } else {
         Logger::warn("Session invalid and not resumable - clearing session and reconnecting");
-        // Clear session data and reconnect with fresh IDENTIFY
         {
             std::scoped_lock lock(m_sessionMutex);
             m_sessionId.clear();
             m_resumeGatewayUrl.clear();
         }
         m_lastSequence.store(-1);
-
         dispatch([this]() {
             Fl::add_timeout(
                 1.0 + (std::rand() % 5),
@@ -777,11 +903,9 @@ void Gateway::reconnect(bool resume) {
 
     Logger::info("Reconnecting to gateway" + std::string(resume ? " (resume)" : " (fresh)"));
 
-    // Stop current connection
     stopHeartbeat();
     m_connected.store(false);
 
-    // If not resuming, clear session data
     if (!resume) {
         std::scoped_lock lock(m_sessionMutex);
         m_sessionId.clear();
@@ -789,7 +913,6 @@ void Gateway::reconnect(bool resume) {
         m_lastSequence.store(-1);
     }
 
-    // Get the URL to connect to
     std::string url;
     {
         std::scoped_lock lock(m_sessionMutex);
@@ -800,13 +923,11 @@ void Gateway::reconnect(bool resume) {
         url = m_options.url;
     }
 
-    // Stop the websocket and wait a bit before reconnecting
-    m_ws.stop();
+    disconnect();
 
-    // Schedule reconnection after a brief delay to ensure clean disconnect
     dispatch([this, url]() {
         Fl::add_timeout(
-            0.5, // Wait 500ms for clean disconnect
+            0.5,
             [](void *userData) {
                 auto *data = static_cast<std::pair<Gateway *, std::string> *>(userData);
                 Gateway *gw = data->first;

@@ -1,4 +1,5 @@
 #include "screens/HomeScreen.h"
+#include "net/Gateway.h"
 #include "router/Router.h"
 #include "state/AppState.h"
 #include "ui/Theme.h"
@@ -33,20 +34,14 @@ void HomeScreen::setupUI() {
     m_sidebar->addVoiceChannel("201", "Gaming");
     m_sidebar->setSelectedChannel("100");
 
-    m_profileBubble->setUser("123", "TestUser", "", "1234");
+    m_profileBubble->setUser("123", "Loading...", "", "0");
     m_profileBubble->setStatus("online");
 
-    m_profileBubble->setOnMicrophoneClicked([]() {
-        Logger::info("Microphone toggled");
-    });
+    m_profileBubble->setOnMicrophoneClicked([]() { Logger::info("Microphone toggled"); });
 
-    m_profileBubble->setOnHeadphonesClicked([]() {
-        Logger::info("Headphones toggled");
-    });
+    m_profileBubble->setOnHeadphonesClicked([]() { Logger::info("Headphones toggled"); });
 
-    m_profileBubble->setOnSettingsClicked([]() {
-        Logger::info("Settings clicked");
-    });
+    m_profileBubble->setOnSettingsClicked([]() { Logger::info("Settings clicked"); });
 
     end();
 }
@@ -60,6 +55,13 @@ void HomeScreen::subscribeToStore() {
                 std::string displayName = !user.globalName.empty() ? user.globalName : user.username;
                 m_profileBubble->setUser(user.id, displayName, user.avatarUrl, user.discriminator);
                 m_profileBubble->setStatus(user.status);
+
+                if (user.customStatus.has_value()) {
+                    const auto &cs = user.customStatus.value();
+                    m_profileBubble->setCustomStatus(cs.text, cs.emojiUrl);
+                } else {
+                    m_profileBubble->setCustomStatus("", "");
+                }
             }
         },
         std::equal_to<std::optional<UserProfile>>{}, true);

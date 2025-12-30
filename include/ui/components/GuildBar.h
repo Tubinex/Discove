@@ -25,6 +25,34 @@ class GuildBar : public Fl_Group {
         refresh();
     }
     int getIconSize() const { return m_iconSize; }
+    void setAppIconSize(int size) {
+        m_appIconSize = size;
+        refresh();
+    }
+    int getAppIconSize() const { return m_appIconSize; }
+    void setAppIconCornerRadius(int radius) {
+        m_appIconCornerRadius = radius;
+        refresh();
+    }
+    int getAppIconCornerRadius() const { return m_appIconCornerRadius; }
+
+    void setSeparatorWidth(int width) {
+        m_separatorWidth = width;
+        refresh();
+    }
+    int getSeparatorWidth() const { return m_separatorWidth; }
+
+    void setSeparatorHeight(int height) {
+        m_separatorHeight = height;
+        refresh();
+    }
+    int getSeparatorHeight() const { return m_separatorHeight; }
+
+    void setSeparatorSpacing(int spacing) {
+        m_separatorSpacing = spacing;
+        refresh();
+    }
+    int getSeparatorSpacing() const { return m_separatorSpacing; }
 
   private:
     void subscribeToStore();
@@ -32,6 +60,13 @@ class GuildBar : public Fl_Group {
     Store::ListenerId m_guildDataListenerId = 0;
     double m_scrollOffset = 0.0;
     int m_iconSize = 42;
+    int m_appIconSize = 24;
+    int m_appIconCornerRadius = 12;
+
+    int m_separatorWidth = 32;
+    int m_separatorHeight = 1;
+    int m_separatorSpacing = 8;
+
     std::function<void(const std::string &)> m_onGuildSelected;
     std::function<void()> m_onHomeClicked;
     std::vector<std::string> m_layoutSignature;

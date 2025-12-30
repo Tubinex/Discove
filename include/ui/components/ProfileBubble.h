@@ -7,6 +7,10 @@
 #include <string>
 #include <vector>
 
+#include "ui/AnimationManager.h"
+
+class GifAnimation;
+
 class ProfileBubble : public Fl_Widget {
   public:
     ProfileBubble(int x, int y, int w, int h, const char *label = nullptr);
@@ -32,6 +36,13 @@ class ProfileBubble : public Fl_Widget {
     void setStatus(const std::string &status);
 
     /**
+     * @brief Set custom status text and emoji
+     * @param customStatus Custom status text (can be empty)
+     * @param emojiUrl Custom status emoji URL (can be empty)
+     */
+    void setCustomStatus(const std::string &customStatus, const std::string &emojiUrl = "");
+
+    /**
      * @brief Set callback for settings button click
      * @param cb Callback function
      */
@@ -55,6 +66,8 @@ class ProfileBubble : public Fl_Widget {
     std::string m_avatarUrl;
     std::string m_discriminator;
     std::string m_status = "online";
+    std::string m_customStatus;
+    std::string m_customStatusEmojiUrl;
 
     bool m_microphoneMuted = false;
     bool m_headphonesDeafened = false;
@@ -64,11 +77,17 @@ class ProfileBubble : public Fl_Widget {
 
     Fl_RGB_Image *m_avatarImage = nullptr;
     Fl_RGB_Image *m_circularAvatar = nullptr;
+    Fl_RGB_Image *m_customStatusEmoji = nullptr;
 
+    std::unique_ptr<GifAnimation> m_avatarGif;
     std::vector<std::unique_ptr<Fl_RGB_Image>> m_circularFrames;
-    std::vector<int> m_frameDelays;
-    size_t m_currentFrame = 0;
-    bool m_isAnimated = false;
+    double m_avatarFrameTimeAccumulated = 0.0;
+    AnimationManager::AnimationId m_avatarAnimationId = 0;
+
+    std::unique_ptr<GifAnimation> m_emojiGif;
+    std::vector<std::unique_ptr<Fl_RGB_Image>> m_emojiFrames;
+    double m_emojiFrameTimeAccumulated = 0.0;
+    AnimationManager::AnimationId m_emojiAnimationId = 0;
 
     std::function<void()> m_onSettingsClicked;
     std::function<void()> m_onMicrophoneClicked;
@@ -78,7 +97,7 @@ class ProfileBubble : public Fl_Widget {
     static constexpr int STATUS_DOT_SIZE = 10;
     static constexpr int STATUS_DOT_BORDER_WIDTH = 3;
 
-    static constexpr int BUTTON_SIZE = 36;
+    static constexpr int BUTTON_SIZE = 32;
     static constexpr int ICON_SIZE = 20;
     static constexpr int ARROW_SIZE = 14;
     static constexpr int ICON_SECTION_WIDTH = BUTTON_SIZE;
@@ -89,6 +108,7 @@ class ProfileBubble : public Fl_Widget {
     static constexpr int BUBBLE_BORDER_RADIUS = 8;
     static constexpr int BUTTON_HOVER_GAP = 1;
     static constexpr int BUTTON_RIGHT_PADDING = 12;
+    static constexpr int CUSTOM_STATUS_EMOJI_SIZE = 16;
 
     void drawAvatar(int avatarX, int avatarY);
     void drawStatusDot(int dotX, int dotY);
@@ -97,6 +117,7 @@ class ProfileBubble : public Fl_Widget {
     int getButtonAt(int mx, int my) const;
     bool isChevronHovered(int btnX, int btnY, bool isToggle, int mx, int my) const;
     void loadAvatar();
-    void advanceFrame();
-    static void animationTimerCallback(void *userdata);
+    void loadCustomStatusEmoji();
+    bool updateAvatarAnimation(); // Returns true to continue, false to stop
+    bool updateEmojiAnimation();  // Returns true to continue, false to stop
 };

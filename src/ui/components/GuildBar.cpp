@@ -20,12 +20,14 @@
 namespace {
 class HomeIcon : public Fl_Box {
   public:
-    HomeIcon(int X, int Y, int W, int H) : Fl_Box(X, Y, W, H) {
-        box(FL_ROUNDED_BOX);
-        color(ThemeColors::BRAND_PRIMARY);
-    }
+    HomeIcon(int X, int Y, int W, int H) : Fl_Box(X, Y, W, H) { box(FL_NO_BOX); }
 
     void setOnClickCallback(std::function<void()> callback) { onClickCallback_ = std::move(callback); }
+
+    void setCornerRadius(int radius) {
+        cornerRadius_ = radius;
+        redraw();
+    }
 
     int handle(int event) override {
         switch (event) {
@@ -39,8 +41,26 @@ class HomeIcon : public Fl_Box {
         }
     }
 
+    void draw() override {
+        fl_color(ThemeColors::BRAND_PRIMARY);
+
+        const int r = cornerRadius_;
+        fl_rectf(x() + r, y(), w() - 2 * r, h());
+        fl_rectf(x(), y() + r, w(), h() - 2 * r);
+
+        fl_pie(x(), y(), r * 2, r * 2, 90, 180);
+        fl_pie(x() + w() - r * 2, y(), r * 2, r * 2, 0, 90);
+        fl_pie(x(), y() + h() - r * 2, r * 2, r * 2, 180, 270);
+        fl_pie(x() + w() - r * 2, y() + h() - r * 2, r * 2, r * 2, 270, 360);
+
+        if (image()) {
+            Fl_Box::draw();
+        }
+    }
+
   private:
     std::function<void()> onClickCallback_;
+    int cornerRadius_ = 12;
 };
 } // namespace
 
@@ -67,7 +87,26 @@ void GuildBar::draw() {
 }
 
 void GuildBar::subscribeToStore() {
-    m_guildDataListenerId = Store::get().subscribe([this](const AppState &state) { refresh(); });
+    struct GuildData {
+        std::vector<GuildInfo> guilds;
+        std::vector<GuildFolder> folders;
+
+        bool operator==(const GuildData &other) const {
+            return guilds.size() == other.guilds.size() && folders.size() == other.folders.size() &&
+                   std::equal(guilds.begin(), guilds.end(), other.guilds.begin(),
+                              [](const GuildInfo &a, const GuildInfo &b) { return a.id == b.id; }) &&
+                   std::equal(folders.begin(), folders.end(), other.folders.begin(),
+                              [](const GuildFolder &a, const GuildFolder &b) {
+                                  return a.id == b.id && a.guildIds == b.guildIds;
+                              });
+        }
+
+        bool operator!=(const GuildData &other) const { return !(*this == other); }
+    };
+
+    m_guildDataListenerId = Store::get().subscribe<GuildData>(
+        [](const AppState &state) -> GuildData { return GuildData{state.guilds, state.guildFolders}; },
+        [this](const GuildData &) { refresh(); });
 }
 
 void GuildBar::refresh() {
@@ -102,27 +141,18 @@ void GuildBar::refresh() {
         begin();
 
         auto *home = new HomeIcon(0, 0, iconSize, iconSize);
+        home->setCornerRadius(m_appIconCornerRadius);
         if (m_onHomeClicked) {
             home->setOnClickCallback(m_onHomeClicked);
         }
 
-        int discordIconSize = 16;
-        if (iconSize >= 128)
-            discordIconSize = 128;
-        else if (iconSize >= 64)
-            discordIconSize = 64;
-        else if (iconSize >= 48)
-            discordIconSize = 48;
-        else if (iconSize >= 32)
-            discordIconSize = 32;
-
-        auto *logoIcon = IconManager::load_recolored_icon("discord", discordIconSize, ThemeColors::BRAND_ON_PRIMARY);
+        auto *logoIcon = IconManager::load_recolored_icon("discord", m_appIconSize, ThemeColors::BRAND_ON_PRIMARY);
         if (logoIcon) {
             home->image(logoIcon);
         }
 
-        new Fl_Box(0, 0, guildBarWidth, 4);
-        auto *separator = new Fl_Box(0, 0, guildBarWidth - 16, 2);
+        new Fl_Box(0, 0, guildBarWidth, m_separatorSpacing);
+        auto *separator = new Fl_Box(0, 0, guildBarWidth - m_separatorWidth, m_separatorHeight);
         separator->box(FL_FLAT_BOX);
         separator->color(ThemeColors::SEPARATOR_GUILD);
 
@@ -201,11 +231,11 @@ void GuildBar::repositionChildren() {
 
     int contentHeight = 0;
     if (children() > 0)
-        contentHeight += topPadding + iconSize + 4;
+        contentHeight += topPadding + iconSize;
     if (children() > 1)
-        contentHeight += 4;
+        contentHeight += m_separatorSpacing;
     if (children() > 2)
-        contentHeight += 2 + 12;
+        contentHeight += m_separatorHeight + m_separatorSpacing;
 
     for (int i = 3; i < children(); ++i) {
         contentHeight += child(i)->h() + spacing;
@@ -224,17 +254,17 @@ void GuildBar::repositionChildren() {
     int currentY = y() + topPadding + static_cast<int>(m_scrollOffset);
     if (children() > 0) {
         child(0)->resize(x() + iconMargin, currentY, iconSize, iconSize);
-        currentY += iconSize + 4;
+        currentY += iconSize;
     }
 
     if (children() > 1) {
-        child(1)->resize(x(), currentY, guildBarWidth, 4);
-        currentY += 4;
+        child(1)->resize(x(), currentY, guildBarWidth, m_separatorSpacing);
+        currentY += m_separatorSpacing;
     }
 
     if (children() > 2) {
-        child(2)->resize(x() + 8, currentY, guildBarWidth - 16, 2);
-        currentY += 2 + 12;
+        child(2)->resize(x() + m_separatorWidth / 2, currentY, guildBarWidth - m_separatorWidth, m_separatorHeight);
+        currentY += m_separatorHeight + m_separatorSpacing;
     }
 
     for (int i = 3; i < children(); ++i) {
@@ -267,11 +297,11 @@ int GuildBar::handle(int event) {
 
         int contentHeight = 0;
         if (children() > 0)
-            contentHeight += topPadding + iconSize + 4;
+            contentHeight += topPadding + iconSize;
         if (children() > 1)
-            contentHeight += 4;
+            contentHeight += m_separatorSpacing;
         if (children() > 2)
-            contentHeight += 2 + 12;
+            contentHeight += m_separatorHeight + m_separatorSpacing;
 
         for (int i = 3; i < children(); ++i) {
             contentHeight += child(i)->h() + spacing;

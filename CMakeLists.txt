@@ -36,7 +36,8 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 
 find_package(FLTK CONFIG REQUIRED)
-find_package(ixwebsocket CONFIG REQUIRED)
+find_package(libwebsockets CONFIG REQUIRED)
+find_package(CURL REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
 file(GLOB_RECURSE SOURCES
@@ -132,12 +133,13 @@ endif()
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     fltk fltk_images
-    ixwebsocket::ixwebsocket
+    websockets
+    CURL::libcurl
     nlohmann_json::nlohmann_json
 )
 
 if(WIN32)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32 comctl32 bcrypt Crypt32 gdiplus gdi32)
+    target_link_libraries(${PROJECT_NAME} PRIVATE ws2_32 comctl32 bcrypt Crypt32 gdiplus gdi32 dbghelp)
     if(MSVC)
         target_compile_options(${PROJECT_NAME} PRIVATE /utf-8)
     endif()

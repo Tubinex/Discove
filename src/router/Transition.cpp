@@ -1,5 +1,6 @@
 #include "router/Transition.h"
 #include "router/Screen.h"
+#include "ui/AnimationManager.h"
 #include "utils/Logger.h"
 #include <FL/Fl.H>
 #include <algorithm>
@@ -7,7 +8,9 @@
 Transition::Transition(Screen *from, Screen *to, double duration, Type type)
     : m_from(from), m_to(to), m_duration(duration), m_type(type) {}
 
-Transition::~Transition() { cancel(); }
+Transition::~Transition() {
+    cancel();
+}
 
 void Transition::start(OnComplete onComplete) {
     if (m_running) {
@@ -19,24 +22,27 @@ void Transition::start(OnComplete onComplete) {
     m_progress = 0.0f;
     m_startTime = std::chrono::steady_clock::now();
 
-    Fl::add_timeout(FRAME_TIME, tick, this);
+    m_animationId = AnimationManager::get().registerAnimation([this]() {
+        return update();
+    });
 }
 
 void Transition::cancel() {
     if (m_running) {
-        Fl::remove_timeout(tick, this);
+        if (m_animationId != 0) {
+            AnimationManager::get().unregisterAnimation(m_animationId);
+            m_animationId = 0;
+        }
         m_running = false;
     }
 }
 
-void Transition::tick(void *data) {
-    auto *transition = static_cast<Transition *>(data);
-    if (transition && transition->m_running) {
-        transition->update();
+bool Transition::update() {
+    if (!m_running) {
+        m_animationId = 0;
+        return false;
     }
-}
 
-void Transition::update() {
     auto now = std::chrono::steady_clock::now();
     double elapsed = std::chrono::duration<double>(now - m_startTime).count();
     m_progress = std::min(1.0f, static_cast<float>(elapsed / m_duration));
@@ -59,11 +65,14 @@ void Transition::update() {
 
     if (m_progress >= 1.0f) {
         m_running = false;
+        m_animationId = 0;
 
         if (m_onComplete) {
             m_onComplete();
         }
-    } else {
-        Fl::add_timeout(FRAME_TIME, tick, this);
+
+        return false;
     }
+
+    return true;
 }

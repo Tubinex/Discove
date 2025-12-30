@@ -2,6 +2,7 @@
 
 #include <FL/Fl.H>
 #include <FL/Fl_RGB_Image.H>
+#include <FL/Fl_Window.H>
 #include <FL/fl_draw.H>
 
 #include <cmath>
@@ -99,30 +100,46 @@ int GuildIcon::handle(int event) {
 void GuildIcon::startAnimation() {
     if (!animationRunning_ && gifAnimation_ && gifAnimation_->isAnimated()) {
         animationRunning_ = true;
-        Fl::add_timeout(gifAnimation_->currentDelay() / 1000.0, animationCallback, this);
+        animationId_ = AnimationManager::get().registerAnimation([this]() {
+            return updateAnimation();
+        });
     }
 }
 
 void GuildIcon::stopAnimation() {
     if (animationRunning_) {
-        Fl::remove_timeout(animationCallback, this);
+        if (animationId_ != 0) {
+            AnimationManager::get().unregisterAnimation(animationId_);
+            animationId_ = 0;
+        }
         animationRunning_ = false;
     }
 }
 
-void GuildIcon::animationCallback(void *data) {
-    auto *self = static_cast<GuildIcon *>(data);
-    if (self) {
-        self->updateAnimation();
+bool GuildIcon::updateAnimation() {
+    if (!gifAnimation_ || !gifAnimation_->isAnimated() || !animationRunning_) {
+        animationId_ = 0;
+        animationRunning_ = false;
+        return false; 
     }
-}
 
-void GuildIcon::updateAnimation() {
-    if (gifAnimation_ && gifAnimation_->isAnimated() && animationRunning_) {
-        gifAnimation_->nextFrame();
-        redraw();
-        Fl::repeat_timeout(gifAnimation_->currentDelay() / 1000.0, animationCallback, this);
+    if (window() && !window()->shown()) {
+        return true; 
     }
+
+    frameTimeAccumulated_ += AnimationManager::get().getFrameTime();
+    double requiredDelay = gifAnimation_->currentDelay() / 1000.0;
+
+    if (frameTimeAccumulated_ >= requiredDelay) {
+        gifAnimation_->nextFrame();
+        frameTimeAccumulated_ = 0.0;
+
+        if (visible_r()) {
+            redraw();
+        }
+    }
+
+    return true;
 }
 
 bool GuildIcon::ensureGifLoaded() {

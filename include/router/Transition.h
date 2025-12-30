@@ -3,6 +3,8 @@
 #include <chrono>
 #include <functional>
 
+#include "ui/AnimationManager.h"
+
 class Screen;
 
 class Transition {
@@ -21,8 +23,7 @@ class Transition {
     float progress() const { return m_progress; }
 
   private:
-    static void tick(void *data);
-    void update();
+    bool update();
 
     Screen *m_from;
     Screen *m_to;
@@ -33,6 +34,5 @@ class Transition {
     float m_progress = 0.0f;
     bool m_running = false;
     OnComplete m_onComplete;
-
-    static constexpr double FRAME_TIME = 1.0 / 60.0; // 60 FPS
+    AnimationManager::AnimationId m_animationId = 0;
 };

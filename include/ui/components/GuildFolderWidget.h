@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include "ui/AnimationManager.h"
+
 class GuildIcon;
 
 class GuildFolderWidget : public Fl_Group {
@@ -36,8 +38,7 @@ class GuildFolderWidget : public Fl_Group {
     int handle(int event) override;
     void resize(int x, int y, int w, int h) override;
 
-    static void animationTimerCallback(void *data);
-    void updateAnimation();
+    bool updateAnimation();
     int getCollapsedHeight() const { return iconSize_; }
     int getExpandedHeight() const {
         const int folderIconSize = static_cast<int>(iconSize_ * 0.85);
@@ -49,11 +50,12 @@ class GuildFolderWidget : public Fl_Group {
     unsigned int color_{0};
     int iconSize_{48};
     int cornerRadius_{12};
-    int folderIconSize_{20};  // Size of the folder SVG icon
+    int folderIconSize_{20};
     bool expanded_{false};
     bool hovered_{false};
 
     bool animating_{false};
     float animationProgress_{0.0f};
     bool targetExpanded_{false};
+    AnimationManager::AnimationId animationId_{0};
 };

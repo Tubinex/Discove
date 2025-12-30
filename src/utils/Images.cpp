@@ -7,7 +7,11 @@
 #include <FL/Fl_PNG_Image.H>
 #include <FL/Fl_RGB_Image.H>
 #include <FL/Fl_Shared_Image.H>
-#include <ixwebsocket/IXHttpClient.h>
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <curl/curl.h>
 
 #include <algorithm>
 #include <atomic>
@@ -58,6 +62,14 @@ std::unordered_set<std::string> pending_downloads;
 constexpr int MAX_CONCURRENT_DOWNLOADS = 8;
 
 void downloadWorker();
+
+size_t curlWriteCallback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t totalSize = size * nmemb;
+    std::string *buffer = static_cast<std::string *>(userp);
+    buffer->append(static_cast<char *>(contents), totalSize);
+    return totalSize;
+}
+
 std::string detectImageFormat(const std::string &data) {
     if (data.size() < 8)
         return "unknown";
@@ -403,18 +415,40 @@ void processImageRequest(const std::string &url, ImageCallback callback, int ret
                                                : "";
     Logger::debug("Downloading image: " + url + attemptInfo);
 
-    ix::HttpClient httpClient;
-    httpClient.setTLSOptions(ix::SocketTLSOptions());
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        Logger::error("Failed to initialize CURL for image: " + url);
+        auto *heapFn = new std::function<void()>([callback]() { callback(nullptr); });
+        Fl::awake(
+            [](void *p) {
+                std::unique_ptr<std::function<void()>> fnPtr(static_cast<std::function<void()> *>(p));
+                (*fnPtr)();
+            },
+            heapFn);
+        return;
+    }
 
-    ix::HttpRequestArgsPtr args = httpClient.createRequest();
-    args->extraHeaders["User-Agent"] = "Discove/1.0";
-    args->connectTimeout = 10;
-    args->transferTimeout = 30;
+    std::string imageData;
 
-    ix::HttpResponsePtr response = httpClient.get(url, args);
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &imageData);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Discove/1.0");
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
 
-    if (!response) {
-        Logger::error("HTTP 0 (connection failed) for image: " + url);
+    CURLcode res = curl_easy_perform(curl);
+    long httpCode = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
+
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK) {
+        Logger::error("CURL error (" + std::to_string(res) + "): " + std::string(curl_easy_strerror(res)) +
+                      " for image: " + url);
 
         if (retryAttempt < MAX_RETRY_ATTEMPTS - 1) {
             scheduleRetry(url, callback, retryAttempt);
@@ -435,13 +469,13 @@ void processImageRequest(const std::string &url, ImageCallback callback, int ret
         return;
     }
 
-    if (response->statusCode != 200) {
-        Logger::error("HTTP " + std::to_string(response->statusCode) + " for image: " + url);
+    if (httpCode != 200) {
+        Logger::error("HTTP " + std::to_string(httpCode) + " for image: " + url);
 
-        if (response->statusCode == 404 || response->statusCode == 403 || response->statusCode == 410) {
+        if (httpCode == 404 || httpCode == 403 || httpCode == 410) {
             markUrlAsFailed(url);
             clearRetryState(url);
-        } else if (response->statusCode >= 500 && response->statusCode < 600 && retryAttempt < MAX_RETRY_ATTEMPTS - 1) {
+        } else if (httpCode >= 500 && httpCode < 600 && retryAttempt < MAX_RETRY_ATTEMPTS - 1) {
             scheduleRetry(url, callback, retryAttempt);
             return;
         }
@@ -455,9 +489,6 @@ void processImageRequest(const std::string &url, ImageCallback callback, int ret
             heapFn);
         return;
     }
-
-    const std::string &imageData = response->body;
-
     if (imageData.empty()) {
         Logger::error("Downloaded image has no data: " + url);
         auto *heapFn = new std::function<void()>([callback]() { callback(nullptr); });

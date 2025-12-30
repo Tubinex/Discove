@@ -5,6 +5,8 @@
 #include <memory>
 #include <string>
 
+#include "ui/AnimationManager.h"
+
 class GifAnimation;
 
 class GuildIcon : public Fl_Box {
@@ -40,8 +42,7 @@ class GuildIcon : public Fl_Box {
   private:
     void draw() override;
     int handle(int event) override;
-    static void animationCallback(void *data);
-    void updateAnimation();
+    bool updateAnimation();
     void startAnimation();
     void stopAnimation();
     bool ensureGifLoaded();
@@ -59,5 +60,7 @@ class GuildIcon : public Fl_Box {
     bool isHovered_{false};
     bool animationRunning_{false};
     bool isSelected_{false};
+    AnimationManager::AnimationId animationId_{0};
+    double frameTimeAccumulated_{0.0};
     std::function<void(const std::string &)> onClickCallback_;
 };

@@ -9,6 +9,23 @@
 #include "models/GuildFolder.h"
 #include "models/GuildInfo.h"
 
+struct CustomStatus {
+    std::string text;
+    std::string emojiName;
+    std::string emojiId;
+    std::string emojiUrl;
+    bool emojiAnimated = false;
+
+    bool isEmpty() const { return text.empty() && emojiUrl.empty(); }
+
+    bool operator==(const CustomStatus &other) const {
+        return text == other.text && emojiName == other.emojiName && emojiId == other.emojiId &&
+               emojiUrl == other.emojiUrl && emojiAnimated == other.emojiAnimated;
+    }
+
+    bool operator!=(const CustomStatus &other) const { return !(*this == other); }
+};
+
 struct RouteState {
     std::string currentPath = "";
     std::unordered_map<std::string, std::string> params;
@@ -33,11 +50,12 @@ struct UserProfile {
     std::string avatarHash;
     std::string avatarUrl;
     std::string status = "online";
+    std::optional<CustomStatus> customStatus;
 
     bool operator==(const UserProfile &other) const {
         return id == other.id && username == other.username && discriminator == other.discriminator &&
                globalName == other.globalName && avatarHash == other.avatarHash && avatarUrl == other.avatarUrl &&
-               status == other.status;
+               status == other.status && customStatus == other.customStatus;
     }
 
     bool operator!=(const UserProfile &other) const { return !(*this == other); }

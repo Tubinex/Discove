@@ -3,6 +3,7 @@
 #include <FL/Fl.H>
 #include <FL/fl_draw.H>
 
+#include "ui/AnimationManager.h"
 #include "ui/IconManager.h"
 #include "ui/Theme.h"
 #include "ui/components/GuildBar.h"
@@ -14,7 +15,11 @@ GuildFolderWidget::GuildFolderWidget(int x, int y, int size) : Fl_Group(x, y, si
     end();
 }
 
-GuildFolderWidget::~GuildFolderWidget() { Fl::remove_timeout(animationTimerCallback, this); }
+GuildFolderWidget::~GuildFolderWidget() {
+    if (animationId_ != 0) {
+        AnimationManager::get().unregisterAnimation(animationId_);
+    }
+}
 
 void GuildFolderWidget::addGuild(GuildIcon *icon) {
     if (icon) {
@@ -87,23 +92,21 @@ void GuildFolderWidget::setExpanded(bool expanded) {
     targetExpanded_ = expanded;
     if (!animating_ || (animating_ && expanded_ != targetExpanded_)) {
         animating_ = true;
-        Fl::remove_timeout(animationTimerCallback, this);
-        Fl::add_timeout(1.0 / 60.0, animationTimerCallback, this); // 60 FPS
+
+        if (animationId_ != 0) {
+            AnimationManager::get().unregisterAnimation(animationId_);
+        }
+
+        animationId_ = AnimationManager::get().registerAnimation([this]() { return updateAnimation(); });
     }
 }
 
 void GuildFolderWidget::toggle() { setExpanded(!expanded_); }
 
-void GuildFolderWidget::animationTimerCallback(void *data) {
-    auto *widget = static_cast<GuildFolderWidget *>(data);
-    if (widget) {
-        widget->updateAnimation();
-    }
-}
-
-void GuildFolderWidget::updateAnimation() {
+bool GuildFolderWidget::updateAnimation() {
     if (!animating_) {
-        return;
+        animationId_ = 0;
+        return false;
     }
 
     const float animationSpeed = 0.15f;
@@ -143,9 +146,12 @@ void GuildFolderWidget::updateAnimation() {
         }
     }
 
-    if (animating_) {
-        Fl::repeat_timeout(1.0 / 60.0, animationTimerCallback, this);
+    if (!animating_) {
+        animationId_ = 0;
+        return false;
     }
+
+    return true;
 }
 
 int GuildFolderWidget::handle(int event) {

@@ -8,21 +8,24 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <queue>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
-#include <ixwebsocket/IXNetSystem.h>
-#include <ixwebsocket/IXWebSocket.h>
+#include <libwebsockets.h>
 #include <nlohmann/json.hpp>
 
 class AppState;
 class DataStore;
 
 void heartbeatTimerCallback(void *userData);
+int lwsCallback(lws *wsi, lws_callback_reasons reason, void *user, void *in, size_t len);
 
 class Gateway {
     friend void heartbeatTimerCallback(void *userData);
+    friend int lwsCallback(lws *wsi, lws_callback_reasons reason, void *user, void *in, size_t len);
 
   public:
     using Json = nlohmann::json;
@@ -161,7 +164,13 @@ class Gateway {
     static Gateway *s_instance;
 
     Options m_options{};
-    ix::WebSocket m_ws;
+
+    lws_context *m_lwsContext = nullptr;
+    lws *m_wsi = nullptr;
+    std::thread m_serviceThread;
+    std::mutex m_sendMutex;
+    std::queue<std::string> m_sendQueue;
+    std::string m_receiveBuffer;
 
     std::atomic<bool> m_connected{false};
     std::atomic<bool> m_shuttingDown{false};
