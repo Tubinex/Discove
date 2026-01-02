@@ -14,7 +14,7 @@ class Emoji {
   public:
     /**
      * @brief Deserialize emoji from JSON
-     * @param j JSON object from Discord API
+     * @param j JSON object
      * @return Emoji instance
      */
     static Emoji fromJson(const nlohmann::json &j);
@@ -27,17 +27,17 @@ class Emoji {
     std::string getEmojiUrl(int size = 128) const;
 
     /**
-     * @brief Get the mention string for this emoji (e.g., "<:name:id>")
+     * @brief Get the mention string for this emoji (<:name:id>)
      * @return Emoji mention string
      */
     std::string getMention() const;
 
-    std::string id;                    ///< Emoji ID (snowflake)
-    std::string name;                  ///< Emoji name
-    std::vector<std::string> roleIds;  ///< Role IDs allowed to use this emoji (whitelist)
-    std::optional<std::string> userId; ///< User who created this emoji
-    bool requireColons = true;         ///< Whether emoji requires colons
-    bool managed = false;              ///< Whether emoji is managed by an integration
-    bool animated = false;             ///< Whether emoji is animated (.gif)
-    bool available = true;             ///< Whether emoji can be used (guild boost level)
+    std::string id;
+    std::string name;
+    std::vector<std::string> roleIds;
+    std::optional<std::string> userId;
+    bool requireColons = true;
+    bool managed = false;
+    bool animated = false;
+    bool available = true;
 };

@@ -14,7 +14,7 @@ class Role {
   public:
     /**
      * @brief Deserialize role from JSON
-     * @param j JSON object from Discord API
+     * @param j JSON object
      * @return Role instance
      */
     static Role fromJson(const nlohmann::json &j);
@@ -39,15 +39,15 @@ class Role {
      */
     uint64_t getPermissionsInt() const;
 
-    std::string id;                          ///< Role ID (snowflake)
-    std::string name;                        ///< Role name
-    uint32_t color = 0;                      ///< RGB color value
-    bool hoist = false;                      ///< Whether role is displayed separately
-    std::optional<std::string> icon;         ///< Role icon hash
-    std::optional<std::string> unicodeEmoji; ///< Unicode emoji for role
-    int position = 0;                        ///< Position in role hierarchy
-    std::string permissions;                 ///< Permission bit set (as string)
-    bool managed = false;                    ///< Whether role is managed by integration
-    bool mentionable = false;                ///< Whether role can be @mentioned
-    std::optional<uint32_t> flags;           ///< Role flags bitfield
+    std::string id;
+    std::string name;
+    uint32_t color = 0;
+    bool hoist = false;
+    std::optional<std::string> icon;
+    std::optional<std::string> unicodeEmoji;
+    int position = 0;
+    std::string permissions;
+    bool managed = false;
+    bool mentionable = false;
+    std::optional<uint32_t> flags;
 };

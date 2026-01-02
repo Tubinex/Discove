@@ -14,7 +14,7 @@ class Attachment {
   public:
     /**
      * @brief Deserialize attachment from JSON
-     * @param j JSON object from Discord API
+     * @param j JSON object
      * @return Attachment instance
      */
     static Attachment fromJson(const nlohmann::json &j);
@@ -37,17 +37,17 @@ class Attachment {
      */
     bool isAudio() const;
 
-    std::string id;                         ///< Attachment ID (snowflake)
-    std::string filename;                   ///< Original filename
-    std::optional<std::string> description; ///< Alt text description
-    std::optional<std::string> contentType; ///< MIME type (e.g., "image/png")
-    uint64_t size = 0;                      ///< File size in bytes
-    std::string url;                        ///< CDN URL for the file
-    std::string proxyUrl;                   ///< Proxied URL
-    std::optional<int> height;              ///< Image/video height in pixels
-    std::optional<int> width;               ///< Image/video width in pixels
-    std::optional<bool> ephemeral;          ///< Whether attachment is ephemeral
-    std::optional<double> durationSecs;     ///< Audio/video duration in seconds
-    std::optional<std::string> waveform;    ///< Base64 encoded waveform for voice messages
-    std::optional<uint32_t> flags;          ///< Attachment flags bitfield
+    std::string id;
+    std::string filename;
+    std::optional<std::string> description;
+    std::optional<std::string> contentType;
+    uint64_t size = 0;
+    std::string url;
+    std::string proxyUrl;
+    std::optional<int> height;
+    std::optional<int> width;
+    std::optional<bool> ephemeral;
+    std::optional<double> durationSecs;
+    std::optional<std::string> waveform;
+    std::optional<uint32_t> flags;
 };

@@ -15,7 +15,7 @@ class GuildSidebar : public Fl_Group {
     int handle(int event) override;
 
     /**
-     * @brief Set the server/guild being displayed
+     * @brief Set the guild being displayed
      * @param guildId Guild ID
      * @param guildName Guild name
      */
@@ -26,6 +26,12 @@ class GuildSidebar : public Fl_Group {
      * @param guildId Guild ID
      */
     void setGuildId(const std::string &guildId);
+
+    /**
+     * @brief Get the current guild ID
+     * @return Guild ID
+     */
+    std::string getGuildId() const { return m_guildId; }
 
     /**
      * @brief Add a text channel to the sidebar
@@ -58,12 +64,31 @@ class GuildSidebar : public Fl_Group {
      */
     void setOnChannelSelected(std::function<void(const std::string &)> callback) { m_onChannelSelected = callback; }
 
+    int getScrollOffset() const { return m_scrollOffset; }
+
+    void setScrollOffset(int offset) {
+        m_scrollOffset = offset;
+        if (m_scrollOffset < 0)
+            m_scrollOffset = 0;
+        redraw();
+    }
+
   private:
     struct ChannelItem {
         std::string id;
         std::string name;
+        int type = 0;
         bool isVoice;
         bool hasUnread = false;
+        int yPos = 0;
+    };
+
+    struct CategoryItem {
+        std::string id;
+        std::string name;
+        std::vector<ChannelItem> channels;
+        bool collapsed = false;
+        int position = 0;
         int yPos = 0;
     };
 
@@ -71,23 +96,23 @@ class GuildSidebar : public Fl_Group {
 
     std::string m_guildId;
     std::string m_guildName;
-    std::vector<ChannelItem> m_textChannels;
-    std::vector<ChannelItem> m_voiceChannels;
+    std::vector<CategoryItem> m_categories;
+    std::vector<ChannelItem> m_uncategorizedChannels;
     std::string m_selectedChannelId;
     int m_hoveredChannelIndex = -1;
-    bool m_hoveredIsVoice = false;
-    bool m_textChannelsCollapsed = false;
-    bool m_voiceChannelsCollapsed = false;
+    std::string m_hoveredCategoryId;
     int m_scrollOffset = 0;
     std::function<void(const std::string &)> m_onChannelSelected;
 
     static constexpr int HEADER_HEIGHT = 48;
-    static constexpr int CHANNEL_HEIGHT = 32;
-    static constexpr int CATEGORY_HEIGHT = 28;
+    static constexpr int CHANNEL_HEIGHT = 36;
+    static constexpr int CATEGORY_HEIGHT = 40;
     static constexpr int INDENT = 8;
 
     void drawServerHeader();
-    void drawChannelCategory(const char *title, int &yPos, bool collapsed, int channelCount);
+    void drawChannelCategory(const char *title, int &yPos, bool collapsed, int channelCount, bool hovered);
     void drawChannel(const ChannelItem &channel, int yPos, bool selected, bool hovered);
-    int getChannelAt(int mx, int my, bool &isVoice) const;
+    int getChannelAt(int mx, int my, std::string &categoryId) const;
+    int getCategoryAt(int mx, int my) const;
+    int calculateContentHeight() const;
 };

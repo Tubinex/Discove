@@ -1,5 +1,7 @@
 #include "ui/AnimationManager.h"
 
+#include "utils/Logger.h"
+
 #include <algorithm>
 
 AnimationManager &AnimationManager::get() {
@@ -15,7 +17,11 @@ AnimationManager::AnimationId AnimationManager::registerAnimation(AnimationCallb
     const auto id = ++m_nextId;
     m_animations.emplace(id, std::move(callback));
 
+    Logger::debug("AnimationManager: Registered animation #" + std::to_string(id) + " (total: " +
+                  std::to_string(m_animations.size()) + ")");
+
     if (m_animations.size() == 1 && !m_timerRunning.load()) {
+        Logger::info("AnimationManager: Starting timer at " + std::to_string(m_fps.load()) + " FPS");
         startTimer();
     }
 
@@ -25,8 +31,15 @@ AnimationManager::AnimationId AnimationManager::registerAnimation(AnimationCallb
 void AnimationManager::unregisterAnimation(AnimationId id) {
     std::scoped_lock lock(m_mutex);
 
-    m_animations.erase(id);
+    auto it = m_animations.find(id);
+    if (it != m_animations.end()) {
+        m_animations.erase(it);
+        Logger::debug("AnimationManager: Unregistered animation #" + std::to_string(id) + " (remaining: " +
+                      std::to_string(m_animations.size()) + ")");
+    }
+
     if (m_animations.empty() && m_timerRunning.load()) {
+        Logger::info("AnimationManager: Stopping timer (no animations remaining)");
         stopTimer();
     }
 }
@@ -88,9 +101,14 @@ void AnimationManager::tick() {
         std::scoped_lock lock(m_mutex);
         for (auto id : toRemove) {
             m_animations.erase(id);
+            Logger::debug("AnimationManager: Auto-removed animation #" + std::to_string(id) +
+                          " (returned false)");
         }
 
+        Logger::debug("AnimationManager: Remaining animations: " + std::to_string(m_animations.size()));
+
         if (m_animations.empty() && m_timerRunning.load()) {
+            Logger::info("AnimationManager: Stopping timer (no animations remaining after cleanup)");
             stopTimer();
             return;
         }

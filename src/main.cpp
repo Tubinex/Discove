@@ -45,7 +45,6 @@ int main(int argc, char **argv) {
 
     init_theme();
 
-    // Load custom fonts
     if (!FontLoader::loadFonts()) {
         Logger::warn("Some fonts failed to load, using fallback fonts");
     }
@@ -58,15 +57,12 @@ int main(int argc, char **argv) {
     window->begin();
     window->add(&router);
 
-    // Channel routes - ALL use the same "channels" reuse key for screen reuse
     auto channelFactory = [](int x, int y, int w, int h) { return std::make_unique<MainLayoutScreen>(x, y, w, h); };
 
     router.addRoute("/channels/me", channelFactory, "channels");
     router.addRoute("/channels/:dmId", channelFactory, "channels");
     router.addRoute("/channels/:guildId/:channelId", channelFactory, "channels");
     router.addRoute("/", channelFactory, "channels");
-
-    // Other routes (no reuse keys)
     router.addRoute("/loading", [](int x, int y, int w, int h) { return std::make_unique<LoadingScreen>(x, y, w, h); });
     router.addRoute("/login", [](int x, int y, int w, int h) { return std::make_unique<LoginScreen>(x, y, w, h); });
     router.addRoute("/settings",

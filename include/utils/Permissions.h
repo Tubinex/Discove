@@ -2,6 +2,10 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
+
+struct PermissionOverwrite;
+class Role;
 
 /**
  * Discord permission bit constants
@@ -73,7 +77,7 @@ bool hasPermission(uint64_t permissions, uint64_t permission);
 
 /**
  * @brief Check if a permission bit is set in a string-encoded permission
- * @param permissionsStr Permission bitfield as string (from Discord API)
+ * @param permissionsStr Permission bitfield as string
  * @param permission The permission bit to check
  * @return true if permission is set
  */
@@ -92,5 +96,26 @@ uint64_t parsePermissions(const std::string &permissionsStr);
  * @return Permission bits as string
  */
 std::string permissionsToString(uint64_t permissions);
+
+/**
+ * @brief Compute base permissions from user roles
+ * @param guildId Guild ID
+ * @param userRoleIds User's role IDs
+ * @param guildRoles All roles in the guild
+ * @return Combined base permissions from all user's roles
+ */
+uint64_t computeBasePermissions(const std::string &guildId, const std::vector<std::string> &userRoleIds,
+                                const std::vector<Role> &guildRoles);
+
+/**
+ * @brief Check if user can view a channel based on permission overwrites
+ * @param guildId Guild ID
+ * @param userRoleIds User's role IDs in this guild
+ * @param permissionOverwrites Permission overwrites for the channel
+ * @param basePermissions User's base permissions from roles
+ * @return true if user can view the channel
+ */
+bool canViewChannel(const std::string &guildId, const std::vector<std::string> &userRoleIds,
+                    const std::vector<PermissionOverwrite> &permissionOverwrites, uint64_t basePermissions);
 
 } // namespace PermissionUtils

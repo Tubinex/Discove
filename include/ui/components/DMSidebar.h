@@ -2,8 +2,11 @@
 
 #include <FL/Fl_Group.H>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
+
+#include "state/Store.h"
 
 class DMSidebar : public Fl_Group {
   public:
@@ -13,17 +16,18 @@ class DMSidebar : public Fl_Group {
     void draw() override;
     int handle(int event) override;
 
-    /**
-     * @brief Set the selected DM
-     * @param dmId DM channel ID to select
-     */
     void setSelectedDM(const std::string &dmId);
 
-    /**
-     * @brief Set callback for DM selection
-     * @param callback Callback function(dmId)
-     */
     void setOnDMSelected(std::function<void(const std::string &)> callback) { m_onDMSelected = callback; }
+
+    int getScrollOffset() const { return m_scrollOffset; }
+
+    void setScrollOffset(int offset) {
+        m_scrollOffset = offset;
+        if (m_scrollOffset < 0)
+            m_scrollOffset = 0;
+        redraw();
+    }
 
   private:
     struct DMItem {
@@ -34,13 +38,14 @@ class DMSidebar : public Fl_Group {
         int yPos = 0;
     };
 
-    void addPlaceholderDMs();
+    void loadDMsFromState();
 
     std::vector<DMItem> m_dms;
     std::string m_selectedDMId;
     int m_hoveredDMIndex = -1;
     int m_scrollOffset = 0;
     std::function<void(const std::string &)> m_onDMSelected;
+    Store::ListenerId m_storeListenerId = 0;
 
     static constexpr int HEADER_HEIGHT = 48;
     static constexpr int DM_HEIGHT = 44;

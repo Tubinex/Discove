@@ -3,8 +3,11 @@
 #include "utils/Logger.h"
 
 #include <FL/Fl.H>
+#include <algorithm>
+#include <atomic>
+#include <deque>
+#include <filesystem>
 #include <unordered_map>
-#include <vector>
 
 #ifdef FONTS_EMBEDDED
 #include "fonts/100.h"
@@ -40,19 +43,114 @@ namespace FontLoader {
 
 namespace {
 std::unordered_map<std::string, Fl_Font> fontMap;
+std::deque<std::string> fontNameStorage;
 Fl_Font nextFontId = FL_FREE_FONT;
+std::filesystem::path tempFontDirPath;
+bool tempFontDirReady = false;
+
+std::filesystem::path ensureTempFontDir() {
+    if (tempFontDirReady) {
+        return tempFontDirPath;
+    }
+
+    std::error_code ec;
+    auto baseDir = std::filesystem::temp_directory_path(ec);
+    if (ec) {
+        Logger::error("Failed to get temp directory for fonts");
+        return {};
+    }
+
+    tempFontDirPath = baseDir / "discove";
+    std::filesystem::create_directories(tempFontDirPath, ec);
+    if (ec || !std::filesystem::exists(tempFontDirPath, ec)) {
+        Logger::warn("Failed to create temp font directory, using base temp directory");
+        tempFontDirPath = baseDir;
+        ec.clear();
+    } else {
+        for (const auto &entry : std::filesystem::directory_iterator(tempFontDirPath, ec)) {
+            if (ec) {
+                break;
+            }
+            std::error_code removeError;
+            std::filesystem::remove_all(entry.path(), removeError);
+        }
+    }
+
+    tempFontDirReady = true;
+    return tempFontDirPath;
+}
+
+bool endsWith(const std::string &value, const std::string &suffix) {
+    if (value.size() < suffix.size()) {
+        return false;
+    }
+    return value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
 
 #ifdef _WIN32
-bool loadFontFromMemoryWindows(const unsigned char *fontData, size_t fontSize, const std::string &fontName) {
-    DWORD numFonts = 0;
-    HANDLE fontHandle = AddFontMemResourceEx((PVOID)fontData, fontSize, NULL, &numFonts);
+std::string makeFltkFontName(const std::string &fontName) {
+    if (endsWith(fontName, " Italic")) {
+        std::string baseName = fontName.substr(0, fontName.size() - 7);
+        if (endsWith(baseName, " Bold")) {
+            baseName.erase(baseName.size() - 5);
+            return "P" + baseName;
+        }
+        return "I" + baseName;
+    }
+    if (endsWith(fontName, " Bold")) {
+        std::string baseName = fontName.substr(0, fontName.size() - 5);
+        return "B" + baseName;
+    }
+    return " " + fontName;
+}
 
-    if (fontHandle == NULL || numFonts == 0) {
-        Logger::error("Failed to load font from memory: " + fontName);
+bool loadFontFromMemoryWindows(const unsigned char *fontData, size_t fontSize, const std::string &fontName) {
+    std::filesystem::path tempDir = ensureTempFontDir();
+    if (tempDir.empty()) {
+        Logger::error("Failed to get temp directory for font: " + fontName);
         return false;
     }
 
-    Fl::set_font(nextFontId, fontName.c_str());
+    std::string safeFileName = fontName;
+    std::replace(safeFileName.begin(), safeFileName.end(), ' ', '_');
+    static std::atomic<unsigned int> tempCounter{0};
+    unsigned int counter = tempCounter.fetch_add(1, std::memory_order_relaxed);
+    std::wstring fileName = L"font_" + std::wstring(safeFileName.begin(), safeFileName.end()) + L"_" +
+                            std::to_wstring(GetCurrentProcessId()) + L"_" + std::to_wstring(counter) + L".ttf";
+    std::filesystem::path tempFilePath = tempDir / fileName;
+    const std::wstring tempFile = tempFilePath.wstring();
+
+    Logger::debug("Creating temp font file: " + std::string(tempFile.begin(), tempFile.end()));
+    HANDLE hFile = CreateFileW(tempFile.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        DWORD error = GetLastError();
+        Logger::error("Failed to create temp font file: " + fontName + " (error: " + std::to_string(error) + ")");
+        return false;
+    }
+
+    DWORD written = 0;
+    if (!WriteFile(hFile, fontData, fontSize, &written, NULL) || written != fontSize) {
+        CloseHandle(hFile);
+        Logger::error("Failed to write font data: " + fontName + " (wrote " + std::to_string(written) + " of " +
+                      std::to_string(fontSize) + " bytes)");
+        return false;
+    }
+    CloseHandle(hFile);
+
+    int result = AddFontResourceExW(tempFile.c_str(), 0, 0);
+    if (result == 0) {
+        DWORD error = GetLastError();
+        Logger::error("Failed to load font from temp file: " + fontName + " (error: " + std::to_string(error) + ")");
+        return false;
+    }
+
+    Logger::debug("AddFontResourceEx loaded " + std::to_string(result) + " font(s) for: " + fontName);
+
+    std::string fltkName = makeFltkFontName(fontName);
+    fontNameStorage.push_back(fltkName);
+    const char *persistentName = fontNameStorage.back().c_str();
+
+    Fl::set_font(nextFontId, persistentName);
     fontMap[fontName] = nextFontId;
     nextFontId++;
 
@@ -70,13 +168,17 @@ bool loadFontWindows(const std::string &fontPath, const std::string &fontName) {
     std::wstring widePath(wideSize, 0);
     MultiByteToWideChar(CP_UTF8, 0, fontPath.c_str(), -1, &widePath[0], wideSize);
 
-    int result = AddFontResourceExW(widePath.c_str(), FR_PRIVATE, 0);
+    int result = AddFontResourceExW(widePath.c_str(), 0, 0);
     if (result == 0) {
         Logger::error("Failed to load font from: " + fontPath);
         return false;
     }
 
-    Fl::set_font(nextFontId, fontName.c_str());
+    std::string fltkName = makeFltkFontName(fontName);
+    fontNameStorage.push_back(fltkName);
+    const char *persistentName = fontNameStorage.back().c_str();
+
+    Fl::set_font(nextFontId, persistentName);
     fontMap[fontName] = nextFontId;
     nextFontId++;
 
@@ -84,6 +186,8 @@ bool loadFontWindows(const std::string &fontPath, const std::string &fontName) {
     return true;
 }
 #elif defined(__APPLE__)
+std::string makeFltkFontName(const std::string &fontName) { return fontName; }
+
 bool loadFontFromMemoryMacOS(const unsigned char *fontData, size_t fontSize, const std::string &fontName) {
     CFDataRef fontDataRef = CFDataCreate(kCFAllocatorDefault, fontData, fontSize);
     if (!fontDataRef) {
@@ -113,7 +217,11 @@ bool loadFontFromMemoryMacOS(const unsigned char *fontData, size_t fontSize, con
         return false;
     }
 
-    Fl::set_font(nextFontId, fontName.c_str());
+    std::string fltkName = makeFltkFontName(fontName);
+    fontNameStorage.push_back(fltkName);
+    const char *persistentName = fontNameStorage.back().c_str();
+
+    Fl::set_font(nextFontId, persistentName);
     fontMap[fontName] = nextFontId;
     nextFontId++;
 
@@ -149,7 +257,11 @@ bool loadFontMacOS(const std::string &fontPath, const std::string &fontName) {
         return false;
     }
 
-    Fl::set_font(nextFontId, fontName.c_str());
+    std::string fltkName = makeFltkFontName(fontName);
+    fontNameStorage.push_back(fltkName);
+    const char *persistentName = fontNameStorage.back().c_str();
+
+    Fl::set_font(nextFontId, persistentName);
     fontMap[fontName] = nextFontId;
     nextFontId++;
 
@@ -157,10 +269,34 @@ bool loadFontMacOS(const std::string &fontPath, const std::string &fontName) {
     return true;
 }
 #else
-bool loadFontFromMemoryLinux(const unsigned char *fontData, size_t fontSize, const std::string &fontName) {
-    std::string tempPath = "/tmp/discove_font_" + fontName + ".ttf";
+std::string makeFltkFontName(const std::string &fontName) {
+    if (endsWith(fontName, " Italic")) {
+        std::string baseName = fontName.substr(0, fontName.size() - 7);
+        if (endsWith(baseName, " Bold")) {
+            baseName.erase(baseName.size() - 5);
+            return "P" + baseName;
+        }
+        return "I" + baseName;
+    }
+    if (endsWith(fontName, " Bold")) {
+        std::string baseName = fontName.substr(0, fontName.size() - 5);
+        return "B" + baseName;
+    }
+    return " " + fontName;
+}
 
-    std::ofstream tempFile(tempPath, std::ios::binary);
+bool loadFontFromMemoryLinux(const unsigned char *fontData, size_t fontSize, const std::string &fontName) {
+    std::filesystem::path tempDir = ensureTempFontDir();
+    if (tempDir.empty()) {
+        Logger::error("Failed to get temp directory for font: " + fontName);
+        return false;
+    }
+
+    std::string safeFileName = fontName;
+    std::replace(safeFileName.begin(), safeFileName.end(), ' ', '_');
+    std::filesystem::path tempPath = tempDir / ("font_" + safeFileName + ".ttf");
+
+    std::ofstream tempFile(tempPath.string(), std::ios::binary);
     if (!tempFile.is_open()) {
         Logger::error("Failed to create temporary font file for: " + fontName);
         return false;
@@ -182,7 +318,11 @@ bool loadFontFromMemoryLinux(const unsigned char *fontData, size_t fontSize, con
         return false;
     }
 
-    Fl::set_font(nextFontId, fontName.c_str());
+    std::string fltkName = makeFltkFontName(fontName);
+    fontNameStorage.push_back(fltkName);
+    const char *persistentName = fontNameStorage.back().c_str();
+
+    Fl::set_font(nextFontId, persistentName);
     fontMap[fontName] = nextFontId;
     nextFontId++;
 
@@ -204,7 +344,11 @@ bool loadFontLinux(const std::string &fontPath, const std::string &fontName) {
         return false;
     }
 
-    Fl::set_font(nextFontId, fontName.c_str());
+    std::string fltkName = makeFltkFontName(fontName);
+    fontNameStorage.push_back(fltkName);
+    const char *persistentName = fontNameStorage.back().c_str();
+
+    Fl::set_font(nextFontId, persistentName);
     fontMap[fontName] = nextFontId;
     nextFontId++;
 
@@ -261,6 +405,7 @@ bool loadFonts() {
 
 #ifdef FONTS_EMBEDDED
     Logger::info("Loading embedded fonts...");
+
     if (loadFontFromMemory(EmbeddedFonts::INTER_THIN_DATA, EmbeddedFonts::INTER_THIN_DATA_size, "Inter Thin")) {
         Fonts::INTER_THIN = getFontId("Inter Thin");
     } else {
@@ -269,10 +414,10 @@ bool loadFonts() {
     }
 
     if (loadFontFromMemory(EmbeddedFonts::INTER_EXTRA_LIGHT_DATA, EmbeddedFonts::INTER_EXTRA_LIGHT_DATA_size,
-                           "Inter Extra Light")) {
-        Fonts::INTER_EXTRA_LIGHT = getFontId("Inter Extra Light");
+                           "Inter ExtraLight")) {
+        Fonts::INTER_EXTRA_LIGHT = getFontId("Inter ExtraLight");
     } else {
-        Logger::warn("Failed to load embedded Inter Extra Light");
+        Logger::warn("Failed to load embedded Inter ExtraLight");
         success = false;
     }
 
@@ -300,6 +445,7 @@ bool loadFonts() {
     if (loadFontFromMemory(EmbeddedFonts::INTER_SEMIBOLD_DATA, EmbeddedFonts::INTER_SEMIBOLD_DATA_size,
                            "Inter SemiBold")) {
         Fonts::INTER_SEMIBOLD = getFontId("Inter SemiBold");
+        Logger::info("INTER_SEMIBOLD assigned font ID: " + std::to_string(Fonts::INTER_SEMIBOLD));
     } else {
         Logger::warn("Failed to load embedded Inter SemiBold");
         success = false;
@@ -307,16 +453,18 @@ bool loadFonts() {
 
     if (loadFontFromMemory(EmbeddedFonts::INTER_BOLD_DATA, EmbeddedFonts::INTER_BOLD_DATA_size, "Inter Bold")) {
         Fonts::INTER_BOLD = getFontId("Inter Bold");
+        Logger::info("INTER_BOLD assigned font ID: " + std::to_string(Fonts::INTER_BOLD));
     } else {
         Logger::warn("Failed to load embedded Inter Bold");
         success = false;
     }
 
     if (loadFontFromMemory(EmbeddedFonts::INTER_EXTRA_BOLD_DATA, EmbeddedFonts::INTER_EXTRA_BOLD_DATA_size,
-                           "Inter Extra Bold")) {
-        Fonts::INTER_EXTRA_BOLD = getFontId("Inter Extra Bold");
+                           "Inter ExtraBold")) {
+        Fonts::INTER_EXTRA_BOLD = getFontId("Inter ExtraBold");
+        Logger::info("INTER_EXTRA_BOLD assigned font ID: " + std::to_string(Fonts::INTER_EXTRA_BOLD));
     } else {
-        Logger::warn("Failed to load embedded Inter Extra Bold");
+        Logger::warn("Failed to load embedded Inter ExtraBold");
         success = false;
     }
 
@@ -336,8 +484,8 @@ bool loadFonts() {
     }
 
     if (loadFontFromMemory(EmbeddedFonts::INTER_EXTRA_LIGHT_ITALIC_DATA,
-                           EmbeddedFonts::INTER_EXTRA_LIGHT_ITALIC_DATA_size, "Inter Extra Light Italic")) {
-        Fonts::INTER_EXTRA_LIGHT_ITALIC = getFontId("Inter Extra Light Italic");
+                           EmbeddedFonts::INTER_EXTRA_LIGHT_ITALIC_DATA_size, "Inter ExtraLight Italic")) {
+        Fonts::INTER_EXTRA_LIGHT_ITALIC = getFontId("Inter ExtraLight Italic");
     } else {
         Logger::warn("Failed to load embedded Inter Extra Light Italic");
         success = false;
@@ -384,8 +532,8 @@ bool loadFonts() {
     }
 
     if (loadFontFromMemory(EmbeddedFonts::INTER_EXTRA_BOLD_ITALIC_DATA,
-                           EmbeddedFonts::INTER_EXTRA_BOLD_ITALIC_DATA_size, "Inter Extra Bold Italic")) {
-        Fonts::INTER_EXTRA_BOLD_ITALIC = getFontId("Inter Extra Bold Italic");
+                           EmbeddedFonts::INTER_EXTRA_BOLD_ITALIC_DATA_size, "Inter ExtraBold Italic")) {
+        Fonts::INTER_EXTRA_BOLD_ITALIC = getFontId("Inter ExtraBold Italic");
     } else {
         Logger::warn("Failed to load embedded Inter Extra Bold Italic");
         success = false;
@@ -410,10 +558,10 @@ bool loadFonts() {
         success = false;
     }
 
-    if (loadFont(fontDir + "200.ttf", "Inter Extra Light")) {
-        Fonts::INTER_EXTRA_LIGHT = getFontId("Inter Extra Light");
+    if (loadFont(fontDir + "200.ttf", "Inter ExtraLight")) {
+        Fonts::INTER_EXTRA_LIGHT = getFontId("Inter ExtraLight");
     } else {
-        Logger::warn("Failed to load Inter Extra Light");
+        Logger::warn("Failed to load Inter ExtraLight");
         success = false;
     }
 
@@ -452,10 +600,10 @@ bool loadFonts() {
         success = false;
     }
 
-    if (loadFont(fontDir + "800.ttf", "Inter Extra Bold")) {
-        Fonts::INTER_EXTRA_BOLD = getFontId("Inter Extra Bold");
+    if (loadFont(fontDir + "800.ttf", "Inter ExtraBold")) {
+        Fonts::INTER_EXTRA_BOLD = getFontId("Inter ExtraBold");
     } else {
-        Logger::warn("Failed to load Inter Extra Bold");
+        Logger::warn("Failed to load Inter ExtraBold");
         success = false;
     }
 
@@ -473,8 +621,8 @@ bool loadFonts() {
         success = false;
     }
 
-    if (loadFont(fontDir + "200italic.ttf", "Inter Extra Light Italic")) {
-        Fonts::INTER_EXTRA_LIGHT_ITALIC = getFontId("Inter Extra Light Italic");
+    if (loadFont(fontDir + "200italic.ttf", "Inter ExtraLight Italic")) {
+        Fonts::INTER_EXTRA_LIGHT_ITALIC = getFontId("Inter ExtraLight Italic");
     } else {
         Logger::warn("Failed to load Inter Extra Light Italic");
         success = false;
@@ -515,8 +663,8 @@ bool loadFonts() {
         success = false;
     }
 
-    if (loadFont(fontDir + "800italic.ttf", "Inter Extra Bold Italic")) {
-        Fonts::INTER_EXTRA_BOLD_ITALIC = getFontId("Inter Extra Bold Italic");
+    if (loadFont(fontDir + "800italic.ttf", "Inter ExtraBold Italic")) {
+        Fonts::INTER_EXTRA_BOLD_ITALIC = getFontId("Inter ExtraBold Italic");
     } else {
         Logger::warn("Failed to load Inter Extra Bold Italic");
         success = false;
@@ -528,6 +676,9 @@ bool loadFonts() {
         Logger::warn("Failed to load Inter Black Italic");
         success = false;
     }
+
+    Logger::info("Notifying Windows of font changes...");
+    SendMessageTimeout(HWND_BROADCAST, WM_FONTCHANGE, 0, 0, SMTO_ABORTIFHUNG, 1000, NULL);
 #endif
 
     return success;
@@ -538,7 +689,7 @@ Fl_Font getFontId(const std::string &name) {
     if (it != fontMap.end()) {
         return it->second;
     }
-    return FL_HELVETICA; // Fallback
+    return FL_HELVETICA;
 }
 
 } // namespace FontLoader

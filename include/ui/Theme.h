@@ -21,6 +21,7 @@ constexpr Fl_Color BRAND_PRIMARY = 0x5865F2FF;
 constexpr Fl_Color BRAND_ON_PRIMARY = 0xFFFFFFFF;
 constexpr Fl_Color SEPARATOR_GUILD = 0x212128FF;
 constexpr Fl_Color GUILD_ICON_BG = 0x2b2b31FF;
+constexpr Fl_Color CHANNEL_ICON = 0x80848eFF;
 
 constexpr Fl_Color BORDER_PRIMARY = 0x252529FF;
 

@@ -123,9 +123,6 @@ class Gateway {
     void setAppState(std::shared_ptr<AppState> state);
     void setDataStore(std::shared_ptr<DataStore> store);
 
-    const std::optional<ReadyState> &getReadyState() const { return m_readyState; }
-    const std::vector<GuildSummary> &getGuilds() const { return m_guilds; }
-
     void setAuthenticated(bool authenticated) { m_authenticated.store(authenticated); }
     bool isAuthenticated() const { return m_authenticated.load(); }
 
@@ -192,8 +189,6 @@ class Gateway {
 
     std::shared_ptr<AppState> m_appState;
     std::shared_ptr<DataStore> m_dataStore;
-    std::optional<ReadyState> m_readyState;
-    std::vector<GuildSummary> m_guilds;
 
     std::atomic<int> m_heartbeatInterval{0};
     std::atomic<bool> m_heartbeatRunning{false};

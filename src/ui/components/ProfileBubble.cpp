@@ -3,6 +3,7 @@
 #include "ui/AnimationManager.h"
 #include "ui/GifAnimation.h"
 #include "ui/IconManager.h"
+#include "ui/RoundedWidget.h"
 #include "ui/Theme.h"
 #include "utils/Fonts.h"
 #include "utils/Images.h"
@@ -39,6 +40,11 @@ ProfileBubble::~ProfileBubble() {
 }
 
 void ProfileBubble::draw() {
+    uchar d = damage();
+    if (!d || d == FL_DAMAGE_CHILD) {
+        return;
+    }
+
     int bubbleX = x() + BUBBLE_MARGIN;
     int bubbleY = y() + BUBBLE_MARGIN;
     int bubbleW = w() - (BUBBLE_MARGIN * 2);
@@ -210,35 +216,12 @@ void ProfileBubble::drawButton(int btnX, int btnY, const char *iconName, bool is
 
     auto drawRoundedRect = [&](int x, int y, int w, int h, Fl_Color color, bool roundTL = true, bool roundTR = true,
                                bool roundBL = true, bool roundBR = true) {
-        fl_color(color);
         constexpr int r = BUBBLE_BORDER_RADIUS;
-
-        if (roundTL)
-            fl_pie(x, y, r * 2, r * 2, 90, 180);
-        if (roundTR)
-            fl_pie(x + w - r * 2, y, r * 2, r * 2, 0, 90);
-        if (roundBL)
-            fl_pie(x, y + h - r * 2, r * 2, r * 2, 180, 270);
-        if (roundBR)
-            fl_pie(x + w - r * 2, y + h - r * 2, r * 2, r * 2, 270, 360);
-
-        int leftOffset = roundTL || roundBL ? r : 0;
-        int rightOffset = roundTR || roundBR ? r : 0;
-        fl_rectf(x + leftOffset, y, w - leftOffset - rightOffset, h);
-
-        if (roundTL || roundBL)
-            fl_rectf(x, y + r, leftOffset, h - r * 2);
-        if (roundTR || roundBR)
-            fl_rectf(x + w - rightOffset, y + r, rightOffset, h - r * 2);
-
-        if (!roundTL)
-            fl_rectf(x, y, r, r);
-        if (!roundTR)
-            fl_rectf(x + w - r, y, r, r);
-        if (!roundBL)
-            fl_rectf(x, y + h - r, r, r);
-        if (!roundBR)
-            fl_rectf(x + w - r, y + h - r, r, r);
+        int rtl = roundTL ? r : 0;
+        int rtr = roundTR ? r : 0;
+        int rbl = roundBL ? r : 0;
+        int rbr = roundBR ? r : 0;
+        RoundedStyle::drawRoundedRect(x, y, w, h, rtl, rtr, rbl, rbr, color);
     };
 
     if (active && hovered) {
@@ -670,7 +653,7 @@ bool ProfileBubble::updateAvatarAnimation() {
         return false;
     }
 
-    if (window() && !window()->shown()) {
+    if (window() && (!window()->shown() || !window()->active())) {
         return true;
     }
 
@@ -681,7 +664,10 @@ bool ProfileBubble::updateAvatarAnimation() {
         m_avatarGif->nextFrame();
         m_avatarFrameTimeAccumulated = 0.0;
         if (visible_r()) {
-            redraw();
+            int bubbleH = h() - (BUBBLE_MARGIN * 2);
+            int avatarX = x() + BUBBLE_MARGIN + (bubbleH - AVATAR_SIZE) / 2;
+            int avatarY = y() + BUBBLE_MARGIN + (bubbleH - AVATAR_SIZE) / 2;
+            damage(FL_DAMAGE_USER1, avatarX, avatarY, AVATAR_SIZE, AVATAR_SIZE);
         }
     }
 
@@ -694,7 +680,7 @@ bool ProfileBubble::updateEmojiAnimation() {
         return false;
     }
 
-    if (window() && !window()->shown()) {
+    if (window() && (!window()->shown() || !window()->active())) {
         return true;
     }
 
@@ -705,7 +691,7 @@ bool ProfileBubble::updateEmojiAnimation() {
         m_emojiGif->nextFrame();
         m_emojiFrameTimeAccumulated = 0.0;
         if (visible_r()) {
-            redraw();
+            damage(FL_DAMAGE_USER1, x(), y(), w(), h());
         }
     }
 

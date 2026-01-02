@@ -8,6 +8,12 @@ class RoundedStyle {
     void setBorderRadius(int radius);
     int getBorderRadius() const { return m_borderRadius; }
 
+    static void drawRoundedRect(int x, int y, int w, int h, int radiusTopLeft, int radiusTopRight,
+                                int radiusBottomLeft, int radiusBottomRight, Fl_Color fill);
+
+    static void drawRoundedOutline(int x, int y, int w, int h, int radiusTopLeft, int radiusTopRight,
+                                    int radiusBottomLeft, int radiusBottomRight, Fl_Color stroke);
+
   protected:
     void drawRoundedRect(int x, int y, int w, int h, int radius, Fl_Color color) const;
 

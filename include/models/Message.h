@@ -57,7 +57,7 @@ class Message {
   public:
     /**
      * @brief Deserialize message from JSON
-     * @param j JSON object from Discord API
+     * @param j JSON object
      * @return Message instance
      */
     static Message fromJson(const nlohmann::json &j);
@@ -76,7 +76,7 @@ class Message {
 
     /**
      * @brief Get the jump URL for this message
-     * @return Discord jump URL (discord.com/channels/...)
+     * @return Discord jump URL
      */
     std::string getJumpUrl() const;
 
@@ -86,23 +86,23 @@ class Message {
      */
     bool wasEdited() const;
 
-    std::string id;                                                       ///< Message ID (snowflake)
-    std::string channelId;                                                ///< Channel ID where message was sent
-    std::string authorId;                                                 ///< Author user ID
-    std::string content;                                                  ///< Message text content
-    std::chrono::system_clock::time_point timestamp;                      ///< Message creation timestamp
-    std::optional<std::chrono::system_clock::time_point> editedTimestamp; ///< Last edit timestamp
-    bool tts = false;                                                     ///< Whether message is text-to-speech
-    bool mentionEveryone = false;                                         ///< Whether @everyone was used
-    std::vector<std::string> mentionIds;                                  ///< Mentioned user IDs
-    std::vector<std::string> mentionRoleIds;                              ///< Mentioned role IDs
-    std::vector<Attachment> attachments;                                  ///< File attachments
-    std::vector<Embed> embeds;                                            ///< Rich embeds
-    std::optional<std::string> nonce;                                     ///< Nonce for verification
-    bool pinned = false;                                                  ///< Whether message is pinned
-    std::optional<std::string> webhookId;                                 ///< Webhook ID if from webhook
-    MessageType type;                                                     ///< Message type
-    std::optional<std::string> applicationId;                             ///< Application ID (for interactions)
-    std::optional<std::string> referencedMessageId;                       ///< Replied-to message ID
-    std::optional<std::string> guildId;                                   ///< Guild ID (if in guild)
+    std::string id;
+    std::string channelId;
+    std::string authorId;
+    std::string content;
+    std::chrono::system_clock::time_point timestamp;
+    std::optional<std::chrono::system_clock::time_point> editedTimestamp;
+    bool tts = false;
+    bool mentionEveryone = false;
+    std::vector<std::string> mentionIds;
+    std::vector<std::string> mentionRoleIds;
+    std::vector<Attachment> attachments;
+    std::vector<Embed> embeds;
+    std::optional<std::string> nonce;
+    bool pinned = false;
+    std::optional<std::string> webhookId;
+    MessageType type;
+    std::optional<std::string> applicationId;
+    std::optional<std::string> referencedMessageId;
+    std::optional<std::string> guildId;
 };

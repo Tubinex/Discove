@@ -12,16 +12,20 @@ constexpr const char *CDN_BASE = "https://cdn.discordapp.com";
  * @return Closest valid Discord CDN size
  */
 inline int normalizeSize(int size) {
-    if (size <= 16) return 16;
-    if (size <= 32) return 32;
-    if (size <= 48) return 48;
-    if (size <= 64) return 64;
+    if (size <= 16)
+        return 16;
+    if (size <= 32)
+        return 32;
+    if (size <= 48)
+        return 48;
+    if (size <= 64)
+        return 64;
     return 128;
 }
 
 /**
  * @brief Get the file extension for an image hash
- * @param hash The image hash (may start with 'a_' for animated)
+ * @param hash The image hash
  * @param preferWebp Whether to prefer .webp over .png for static images
  * @return ".gif" for animated images, ".webp" or ".png" for static
  */
@@ -31,7 +35,7 @@ std::string getImageExtension(const std::string &hash, bool preferWebp = true);
  * @brief Construct user avatar URL
  * @param userId User's snowflake ID
  * @param avatarHash User's avatar hash
- * @param size Desired size (16-4096, power of 2)
+ * @param size Desired size (16-4096)
  * @return CDN URL for user avatar
  * @see https://discord.com/developers/docs/reference#image-formatting
  */
@@ -73,7 +77,7 @@ std::string getGuildIconUrl(const std::string &guildId, const std::string &iconH
                             bool preferWebp = false);
 
 /**
- * @brief Construct guild splash URL (invite background)
+ * @brief Construct guild splash URL
  * @param guildId Guild's snowflake ID
  * @param splashHash Guild's splash hash
  * @param size Desired size (default 512)
@@ -101,7 +105,7 @@ std::string getGuildDiscoverySplashUrl(const std::string &guildId, const std::st
 std::string getGuildBannerUrl(const std::string &guildId, const std::string &bannerHash, int size = 512);
 
 /**
- * @brief Construct guild member avatar URL (guild-specific avatar)
+ * @brief Construct guild member avatar URL
  * @param guildId Guild's snowflake ID
  * @param userId User's snowflake ID
  * @param avatarHash Member's guild-specific avatar hash
@@ -116,7 +120,7 @@ std::string getMemberAvatarUrl(const std::string &guildId, const std::string &us
  * @param emojiId Emoji's snowflake ID
  * @param animated Whether the emoji is animated
  * @param size Desired size (default 128)
- * @return CDN URL for custom emoji (.gif if animated, .webp/.png otherwise)
+ * @return CDN URL for custom emoji
  */
 std::string getEmojiUrl(const std::string &emojiId, bool animated, int size = 128);
 
@@ -130,7 +134,7 @@ std::string getEmojiUrl(const std::string &emojiId, bool animated, int size = 12
 std::string getRoleIconUrl(const std::string &roleId, const std::string &iconHash, int size = 64);
 
 /**
- * @brief Construct channel icon URL (for group DMs)
+ * @brief Construct channel icon URL
  * @param channelId Channel's snowflake ID
  * @param iconHash Channel's icon hash
  * @param size Desired size (default 256)
@@ -141,31 +145,31 @@ std::string getChannelIconUrl(const std::string &channelId, const std::string &i
 /**
  * @brief Construct sticker URL
  * @param stickerId Sticker's snowflake ID
- * @return CDN URL for sticker (PNG format)
+ * @return CDN URL for sticker
  */
 std::string getStickerUrl(const std::string &stickerId);
 
 /**
  * @brief Construct avatar decoration URL
- * @param assetHash Avatar decoration asset hash (may start with 'a_' for animated)
- * @return CDN URL for avatar decoration preset (APNG if animated, WebP/PNG if static)
+ * @param assetHash Avatar decoration asset hash
+ * @return CDN URL for avatar decoration preset
  * @note Animated decorations return .png URLs but contain APNG data, not .gif
  */
 std::string getAvatarDecorationUrl(const std::string &assetHash);
 
 /**
  * @brief Construct static nameplate URL
- * @param assetPath Nameplate asset path (e.g., "nameplates/straw/fluttering_static/")
- * @param size Unused - kept for API compatibility (nameplates use static.png)
- * @return CDN URL for static nameplate (format: cdn.discordapp.com/assets/collectibles/{assetPath}static.png)
+ * @param assetPath Nameplate asset path
+ * @param size Unused - kept for API compatibility
+ * @return CDN URL for static nameplate
  */
 std::string getNameplateUrl(const std::string &assetPath, int size = 128);
 
 /**
  * @brief Construct animated nameplate URL
- * @param assetPath Nameplate asset path (e.g., "nameplates/its_showtime/encore_orange/")
- * @return CDN URL for animated nameplate (format: cdn.discordapp.com/assets/collectibles/{assetPath}asset.webm)
- * @note Returns WebM video format - may need conversion for some use cases
+ * @param assetPath Nameplate asset path
+ * @return CDN URL for animated nameplate
+ * @note Returns WebM video
  */
 std::string getNameplateAnimatedUrl(const std::string &assetPath);
 

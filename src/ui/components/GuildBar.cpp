@@ -93,18 +93,14 @@ void GuildBar::setOnHomeClicked(std::function<void()> cb) {
 
 void GuildBar::setOnGuildSelected(std::function<void(const std::string &)> cb) {
     m_onGuildSelected = std::move(cb);
-
-    // Update callbacks on existing guild icons
     for (int i = 0; i < children(); i++) {
         auto *widget = child(i);
 
-        // Check if it's a direct GuildIcon
         if (auto *icon = dynamic_cast<GuildIcon *>(widget)) {
             if (m_onGuildSelected) {
                 icon->setOnClickCallback(m_onGuildSelected);
             }
         }
-        // Check if it's a GuildFolderWidget containing icons
         else if (auto *folder = dynamic_cast<GuildFolderWidget *>(widget)) {
             for (int j = 0; j < folder->children(); j++) {
                 if (auto *icon = dynamic_cast<GuildIcon *>(folder->child(j))) {
@@ -118,6 +114,10 @@ void GuildBar::setOnGuildSelected(std::function<void(const std::string &)> cb) {
 }
 
 void GuildBar::draw() {
+    if (!damage() || damage() == FL_DAMAGE_CHILD) {
+        return;
+    }
+
     draw_box();
     draw_children();
 }

@@ -118,6 +118,6 @@ class ProfileBubble : public Fl_Widget {
     bool isChevronHovered(int btnX, int btnY, bool isToggle, int mx, int my) const;
     void loadAvatar();
     void loadCustomStatusEmoji();
-    bool updateAvatarAnimation(); // Returns true to continue, false to stop
-    bool updateEmojiAnimation();  // Returns true to continue, false to stop
+    bool updateAvatarAnimation();
+    bool updateEmojiAnimation();
 };

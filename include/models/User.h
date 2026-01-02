@@ -25,7 +25,7 @@ class User {
   public:
     /**
      * @brief Deserialize user from JSON
-     * @param j JSON object from Discord API
+     * @param j JSON object
      * @return User instance
      */
     static User fromJson(const nlohmann::json &j);

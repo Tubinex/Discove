@@ -127,13 +127,11 @@ std::string getStickerUrl(const std::string &stickerId) {
 
 std::string getAvatarDecorationUrl(const std::string &assetHash) {
     std::ostringstream url;
-    // Avatar decorations always use .png (APNG for animated, regular PNG for static)
     url << CDN_BASE << "/avatar-decoration-presets/" << assetHash << ".png";
     return url.str();
 }
 
 std::string getNameplateUrl(const std::string &assetPath, int size) {
-    (void)size; // Size parameter unused - nameplates use static.png
     std::ostringstream url;
     url << CDN_BASE << "/assets/collectibles/" << assetPath << "static.png";
     return url.str();

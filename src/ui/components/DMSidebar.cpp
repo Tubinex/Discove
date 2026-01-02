@@ -2,20 +2,50 @@
 
 #include "state/AppState.h"
 #include "ui/Theme.h"
+#include "utils/Logger.h"
 
 #include <FL/Fl.H>
 #include <FL/fl_draw.H>
 
 DMSidebar::DMSidebar(int x, int y, int w, int h, const char *label) : Fl_Group(x, y, w, h, label) {
     box(FL_NO_BOX);
+    clip_children(1);
     end();
 
-    addPlaceholderDMs();
+    m_storeListenerId = Store::get().subscribe<std::vector<std::shared_ptr<DMChannel>>>(
+        [](const AppState &state) { return state.privateChannels; },
+        [this](const std::vector<std::shared_ptr<DMChannel>> &channels) {
+            Fl::lock();
+            loadDMsFromState();
+            redraw();
+            Fl::unlock();
+            Fl::awake();
+        },
+        [](const std::vector<std::shared_ptr<DMChannel>> &a, const std::vector<std::shared_ptr<DMChannel>> &b) {
+            if (a.size() != b.size())
+                return false;
+            for (size_t i = 0; i < a.size(); ++i) {
+                if (a[i]->id != b[i]->id)
+                    return false;
+            }
+            return true;
+        },
+        true);
 }
 
-DMSidebar::~DMSidebar() {}
+DMSidebar::~DMSidebar() {
+    if (m_storeListenerId) {
+        Store::get().unsubscribe(m_storeListenerId);
+    }
+}
 
 void DMSidebar::draw() {
+    if (!damage() || damage() == FL_DAMAGE_CHILD) {
+        return;
+    }
+
+    fl_push_clip(x(), y(), w(), h());
+
     fl_color(ThemeColors::BG_SECONDARY);
     fl_rectf(x(), y(), w(), h());
 
@@ -31,6 +61,8 @@ void DMSidebar::draw() {
         drawDM(dm, currentY, selected, hovered);
         currentY += DM_HEIGHT;
     }
+
+    fl_pop_clip();
 }
 
 void DMSidebar::drawHeader() {
@@ -155,22 +187,28 @@ int DMSidebar::getDMAt(int mx, int my) const {
     return -1;
 }
 
-void DMSidebar::addPlaceholderDMs() {
-    DMItem item1;
-    item1.id = "1";
-    item1.username = "User 1";
-    item1.status = "online";
-    m_dms.push_back(item1);
+void DMSidebar::loadDMsFromState() {
+    m_dms.clear();
 
-    DMItem item2;
-    item2.id = "2";
-    item2.username = "User 2";
-    item2.status = "idle";
-    m_dms.push_back(item2);
+    AppState state = Store::get().snapshot();
+    for (const auto &channel : state.privateChannels) {
+        if (!channel)
+            continue;
 
-    DMItem item3;
-    item3.id = "3";
-    item3.username = "User 3";
-    item3.status = "dnd";
-    m_dms.push_back(item3);
+        DMItem item;
+        item.id = channel->id;
+
+        if (channel->name.has_value() && !channel->name->empty()) {
+            item.username = *channel->name;
+        } else if (!channel->recipientIds.empty()) {
+            item.username = "DM " + channel->recipientIds[0].substr(0, 8);
+        } else {
+            item.username = "Unknown DM";
+        }
+
+        item.avatarUrl = "";
+        item.status = "offline";
+
+        m_dms.push_back(item);
+    }
 }

@@ -1,10 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
+#include "models/PermissionOverwrite.h"
 #include <nlohmann/json.hpp>
 
 /**
@@ -28,64 +30,103 @@ enum class ChannelType {
 };
 
 /**
- * @brief Represents a Discord channel
+ * @brief Base class for all Discord channels
  * @see https://discord.com/developers/docs/resources/channel
  */
 class Channel {
   public:
-    /**
-     * @brief Deserialize channel from JSON
-     * @param j JSON object from Discord API
-     * @return Channel instance
-     */
-    static Channel fromJson(const nlohmann::json &j);
+    virtual ~Channel() = default;
 
     /**
-     * @brief Check if this is a guild channel
-     * @return true if channel is in a guild
+     * @brief Factory method to deserialize channel from JSON
+     * @param j JSON object
+     * @return Unique pointer to appropriate channel subclass
      */
-    bool isGuildChannel() const;
+    static std::unique_ptr<Channel> fromJson(const nlohmann::json &j);
+
+    virtual bool isGuildChannel() const = 0;
+
+    virtual bool isDM() const = 0;
+
+    virtual bool isThread() const { return false; }
+
+    virtual bool isVoice() const { return false; }
+
+    std::string id;
+    ChannelType type;
+    std::optional<std::string> name;
+    std::optional<std::string> lastMessageId;
+};
+
+class GuildChannel : public Channel {
+  public:
+    bool isGuildChannel() const override { return true; }
+    bool isDM() const override { return false; }
+
+    std::string guildId;
+    int position = 0;
+    std::optional<std::string> parentId;
+    std::vector<PermissionOverwrite> permissionOverwrites;
+};
+
+class TextChannel : public GuildChannel {
+  public:
+    std::optional<std::string> topic;
+    bool nsfw = false;
+    std::optional<int> rateLimitPerUser;
+};
+
+class VoiceChannel : public GuildChannel {
+  public:
+    bool isVoice() const override { return true; }
+
+    std::optional<int> bitrate;
+    std::optional<int> userLimit;
+};
+
+class CategoryChannel : public GuildChannel {
+  public:
+};
+
+class ThreadChannel : public GuildChannel {
+  public:
+    bool isThread() const override { return true; }
+
+    std::optional<std::string> ownerId;
+    std::optional<int> messageCount;
+    std::optional<int> memberCount;
+    std::optional<int> rateLimitPerUser;
+};
+
+class ForumChannel : public GuildChannel {
+  public:
+    std::optional<std::string> topic;
+    bool nsfw = false;
+};
+
+class MediaChannel : public GuildChannel {
+  public:
+    std::optional<std::string> topic;
+    bool nsfw = false;
+};
+
+class DirectoryChannel : public GuildChannel {
+  public:
+};
+
+class DMChannel : public Channel {
+  public:
+    bool isGuildChannel() const override { return false; }
+    bool isDM() const override { return true; }
 
     /**
-     * @brief Check if this is a DM channel
-     * @return true if channel is a DM or group DM
-     */
-    bool isDM() const;
-
-    /**
-     * @brief Check if this is a thread
-     * @return true if channel is a thread
-     */
-    bool isThread() const;
-
-    /**
-     * @brief Check if this is a voice channel
-     * @return true if channel is voice/stage
-     */
-    bool isVoice() const;
-
-    /**
-     * @brief Get channel icon URL (for group DMs)
+     * @brief Get channel icon URL
      * @param size Desired size (default 256)
      * @return CDN URL for icon, or empty if none
      */
     std::string getIconUrl(int size = 256) const;
 
-    std::string id;                           ///< Channel ID (snowflake)
-    ChannelType type;                         ///< Channel type
-    std::optional<std::string> guildId;       ///< Guild ID (null for DMs)
-    std::optional<int> position;              ///< Sorting position in guild
-    std::optional<std::string> name;          ///< Channel name
-    std::optional<std::string> topic;         ///< Channel topic/description
-    bool nsfw = false;                        ///< Whether channel is NSFW
-    std::optional<std::string> lastMessageId; ///< ID of last message
-    std::optional<int> bitrate;               ///< Voice bitrate (voice channels)
-    std::optional<int> userLimit;             ///< User limit (voice channels)
-    std::optional<int> rateLimitPerUser;      ///< Slowmode seconds
-    std::vector<std::string> recipientIds;    ///< DM recipient user IDs
-    std::optional<std::string> icon;          ///< Channel icon hash (group DMs)
-    std::optional<std::string> ownerId;       ///< DM/thread creator ID
-    std::optional<std::string> parentId;      ///< Parent channel/category ID
-    std::optional<int> messageCount;          ///< Thread message count
-    std::optional<int> memberCount;           ///< Thread member count
+    std::vector<std::string> recipientIds;
+    std::optional<std::string> icon;
+    std::optional<std::string> ownerId;
 };

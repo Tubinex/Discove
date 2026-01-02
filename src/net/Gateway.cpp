@@ -1,6 +1,9 @@
 #include "net/Gateway.h"
 
+#include "models/Channel.h"
 #include "models/GuildFolder.h"
+#include "models/GuildMember.h"
+#include "models/Role.h"
 #include "models/User.h"
 #include "state/Store.h"
 #include "utils/CDN.h"
@@ -492,8 +495,6 @@ void Gateway::handleReady(const Json &data) {
         }
     }
 
-    m_readyState = state;
-
     std::string userStatus = "online";
     std::optional<CustomStatus> customStatus;
 
@@ -574,8 +575,9 @@ void Gateway::handleReady(const Json &data) {
         appState.currentUser = std::move(profile);
     });
 
-    m_guilds.clear();
     std::vector<GuildInfo> guildsForState;
+    std::unordered_map<std::string, std::vector<std::shared_ptr<GuildChannel>>> allGuildChannels;
+    std::unordered_map<std::string, std::vector<Role>> allGuildRoles;
 
     if (data.contains("guilds") && data["guilds"].is_array()) {
         Logger::debug("Found guilds array with " + std::to_string(data["guilds"].size()) + " guilds");
@@ -622,19 +624,103 @@ void Gateway::handleReady(const Json &data) {
                 }
             }
 
+            if (guildJson.contains("channels") && guildJson["channels"].is_array() && !guild.id.empty()) {
+                std::vector<std::shared_ptr<GuildChannel>> guildChannelsList;
+                for (const auto &channelJson : guildJson["channels"]) {
+                    auto channel = Channel::fromJson(channelJson);
+                    if (auto *guildChannel = dynamic_cast<GuildChannel *>(channel.get())) {
+                        guildChannelsList.push_back(
+                            std::shared_ptr<GuildChannel>(static_cast<GuildChannel *>(channel.release())));
+                    }
+                }
+                if (!guildChannelsList.empty()) {
+                    allGuildChannels[guild.id] = std::move(guildChannelsList);
+                }
+            }
+
+            if (guildJson.contains("roles") && guildJson["roles"].is_array() && !guild.id.empty()) {
+                std::vector<Role> rolesList;
+                for (const auto &roleJson : guildJson["roles"]) {
+                    rolesList.push_back(Role::fromJson(roleJson));
+                }
+                if (!rolesList.empty()) {
+                    allGuildRoles[guild.id] = std::move(rolesList);
+                }
+            }
+
             if (!guild.id.empty()) {
-                m_guilds.push_back(std::move(guild));
                 guildsForState.push_back(std::move(guildInfo));
             }
         }
     }
 
-    Store::get().update([guildsForState = std::move(guildsForState)](AppState &appState) mutable {
+    std::unordered_map<std::string, GuildMember> guildMembersMap;
+    if (data.contains("merged_members") && data["merged_members"].is_array()) {
+        const auto &mergedMembers = data["merged_members"];
+        Logger::debug("Found merged_members array with " + std::to_string(mergedMembers.size()) + " entries");
+
+        size_t guildIndex = 0;
+        if (data.contains("guilds") && data["guilds"].is_array()) {
+            const auto &guildsArray = data["guilds"];
+
+            for (size_t i = 0; i < mergedMembers.size() && i < guildsArray.size(); ++i) {
+                if (!mergedMembers[i].is_array() || mergedMembers[i].empty()) {
+                    continue;
+                }
+
+                std::string guildId;
+                if (guildsArray[i].contains("id") && guildsArray[i]["id"].is_string()) {
+                    guildId = guildsArray[i]["id"].get<std::string>();
+                } else {
+                    continue;
+                }
+
+                const auto &memberJson = mergedMembers[i][0];
+                GuildMember member = GuildMember::fromJson(memberJson);
+
+                if (!member.userId.empty()) {
+                    guildMembersMap[guildId] = std::move(member);
+                }
+            }
+        }
+    }
+
+    size_t guildCount = guildsForState.size();
+    size_t totalChannelCount = 0;
+    for (const auto &[guildId, channels] : allGuildChannels) {
+        totalChannelCount += channels.size();
+    }
+
+    Store::get().update([guildsForState = std::move(guildsForState), allGuildChannels = std::move(allGuildChannels),
+                         allGuildRoles = std::move(allGuildRoles),
+                         guildMembersMap = std::move(guildMembersMap)](AppState &appState) mutable {
         appState.guilds = std::move(guildsForState);
+        appState.guildChannels = std::move(allGuildChannels);
+        appState.guildRoles = std::move(allGuildRoles);
+        appState.guildMembers = std::move(guildMembersMap);
     });
 
-    Logger::info("Stored " + std::to_string(m_guilds.size()) + " guilds in AppState");
+    Logger::info("Stored " + std::to_string(guildCount) + " guilds and " + std::to_string(totalChannelCount) +
+                 " total channels in AppState");
 
+    if (data.contains("private_channels") && data["private_channels"].is_array()) {
+        Logger::info("Processing " + std::to_string(data["private_channels"].size()) + " private channels");
+
+        std::vector<std::shared_ptr<DMChannel>> privateChannels;
+        for (const auto &privateChannelJson : data["private_channels"]) {
+            auto channel = Channel::fromJson(privateChannelJson);
+            if (auto *dmChannel = dynamic_cast<DMChannel *>(channel.get())) {
+                privateChannels.push_back(std::shared_ptr<DMChannel>(static_cast<DMChannel *>(channel.release())));
+            }
+        }
+
+        size_t dmCount = privateChannels.size();
+        Store::get().update([privateChannels = std::move(privateChannels)](AppState &appState) mutable {
+            appState.privateChannels = std::move(privateChannels);
+        });
+
+        Logger::info("Stored " + std::to_string(dmCount) + " DM channels in AppState");
+    }
     if (data.contains("users") && data["users"].is_array()) {
         Logger::info("Processing " + std::to_string(data["users"].size()) + " users for collectibles");
 
@@ -684,19 +770,6 @@ void Gateway::handleReadySupplemental(const Json &data) {
         Logger::error(std::string("Failed to write READY_SUPPLEMENTAL message: ") + e.what());
     }
 
-    // READY_SUPPLEMENTAL contains additional data:
-    // - merged_presences: presence data for guild members
-    // - merged_members: additional member data for guilds
-    // - lazy_private_channels: private channel data
-    // - guilds: supplemental guild information
-
-    // TODO: When DataStore is implemented, process and store:
-    // - Merged presences for online status tracking
-    // - Merged members for member cache
-    // - Lazy private channels for DM support
-    // - Guild supplemental data
-
-    // For now, just log that we received it
     if (data.contains("guilds") && data["guilds"].is_array()) {
         const size_t guildCount = data["guilds"].size();
         (void)guildCount;
@@ -704,7 +777,6 @@ void Gateway::handleReadySupplemental(const Json &data) {
 }
 
 void Gateway::handleMessageCreate(const Json &data) {
-    // TODO: Store messages in DataStore
     std::string messageId;
     std::string channelId;
     std::string content;
@@ -763,10 +835,6 @@ void Gateway::handleMessageCreate(const Json &data) {
     if (messageId.empty() || channelId.empty() || authorId.empty()) {
         return;
     }
-
-    // TODO: When DataStore is implemented, store the message:
-    // m_dataStore->upsertUser(authorId, authorUsername, authorDiscriminator, isBot, authorGlobalName, authorAvatar);
-    // m_dataStore->upsertMessage(messageId, channelId, authorId, content, timestampMs);
 }
 
 void Gateway::handleUserSettingsProtoUpdate(const Json &data) {
@@ -1030,7 +1098,7 @@ void Gateway::logMessage(const Json &msg) {
 }
 
 void Gateway::logUnhandledEvent(const std::string &eventType) {
-    Logger::warn("Unhandled event type: " + eventType);
+    Logger::debug("Unhandled event type: " + eventType);
 
     try {
         std::filesystem::create_directories("discove");

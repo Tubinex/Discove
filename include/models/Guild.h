@@ -7,14 +7,14 @@
 #include <nlohmann/json.hpp>
 
 /**
- * @brief Represents a Discord guild (server)
+ * @brief Represents a Discord guild
  * @see https://discord.com/developers/docs/resources/guild
  */
 class Guild {
   public:
     /**
      * @brief Deserialize guild from JSON
-     * @param j JSON object from Discord API
+     * @param j JSON object
      * @return Guild instance
      */
     static Guild fromJson(const nlohmann::json &j);
@@ -47,23 +47,23 @@ class Guild {
      */
     bool hasFeature(const std::string &feature) const;
 
-    std::string id;                             ///< Guild ID (snowflake)
-    std::string name;                           ///< Guild name
-    std::optional<std::string> icon;            ///< Icon hash
-    std::optional<std::string> splash;          ///< Splash hash
-    std::optional<std::string> discoverySplash; ///< Discovery splash hash
-    std::optional<std::string> banner;          ///< Banner hash
-    std::string ownerId;                        ///< Owner's user ID
-    std::optional<std::string> description;     ///< Guild description
-    std::vector<std::string> features;          ///< Guild features array
-    int verificationLevel = 0;                  ///< Verification level (0-4)
-    int defaultMessageNotifications = 0;        ///< Default notification level (0-1)
-    int explicitContentFilter = 0;              ///< Explicit content filter (0-2)
-    int mfaLevel = 0;                           ///< MFA level (0-1)
-    int premiumTier = 0;                        ///< Boost level (0-3)
-    int premiumSubscriptionCount = 0;           ///< Number of boosts
-    std::optional<std::string> preferredLocale; ///< Preferred locale (e.g., "en-US")
-    bool unavailable = false;                   ///< Whether guild is unavailable
-    int memberCount = 0;                        ///< Approximate member count
-    bool large = false;                         ///< Whether guild is large (>75 members)
+    std::string id;
+    std::string name;
+    std::optional<std::string> icon;
+    std::optional<std::string> splash;
+    std::optional<std::string> discoverySplash;
+    std::optional<std::string> banner;
+    std::string ownerId;
+    std::optional<std::string> description;
+    std::vector<std::string> features;
+    int verificationLevel = 0;
+    int defaultMessageNotifications = 0;
+    int explicitContentFilter = 0;
+    int mfaLevel = 0;
+    int premiumTier = 0;
+    int premiumSubscriptionCount = 0;
+    std::optional<std::string> preferredLocale;
+    bool unavailable = false;
+    int memberCount = 0;
+    bool large = false;
 };

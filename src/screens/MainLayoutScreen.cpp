@@ -115,6 +115,15 @@ void MainLayoutScreen::updateContentForRoute(const Context &ctx) {
 
 void MainLayoutScreen::clearContentArea() {
     if (m_sidebar) {
+        if (auto *dmSidebar = dynamic_cast<DMSidebar *>(m_sidebar)) {
+            m_dmSidebarScrollOffset = dmSidebar->getScrollOffset();
+        } else if (auto *guildSidebar = dynamic_cast<GuildSidebar *>(m_sidebar)) {
+            std::string guildId = guildSidebar->getGuildId();
+            if (!guildId.empty()) {
+                m_guildSidebarScrollOffsets[guildId] = guildSidebar->getScrollOffset();
+            }
+        }
+
         remove(m_sidebar);
         delete m_sidebar;
         m_sidebar = nullptr;
@@ -135,6 +144,7 @@ void MainLayoutScreen::createDMsView() {
     begin();
 
     auto *sidebar = new DMSidebar(GUILD_BAR_WIDTH, 0, SIDEBAR_WIDTH, contentHeight);
+    sidebar->setScrollOffset(m_dmSidebarScrollOffset);
     sidebar->setOnDMSelected([](const std::string &dmId) { Router::navigate("/channels/" + dmId); });
 
     auto *placeholder = new ChannelPlaceholder(GUILD_BAR_WIDTH + SIDEBAR_WIDTH, 0,
@@ -158,6 +168,7 @@ void MainLayoutScreen::createDMChannelView(const std::string &dmId) {
     begin();
 
     auto *sidebar = new DMSidebar(GUILD_BAR_WIDTH, 0, SIDEBAR_WIDTH, contentHeight);
+    sidebar->setScrollOffset(m_dmSidebarScrollOffset);
     sidebar->setSelectedDM(dmId);
     sidebar->setOnDMSelected([](const std::string &newDmId) { Router::navigate("/channels/" + newDmId); });
 
@@ -184,6 +195,12 @@ void MainLayoutScreen::createGuildChannelView(const std::string &guildId, const 
     auto *sidebar = new GuildSidebar(GUILD_BAR_WIDTH, 0, SIDEBAR_WIDTH, contentHeight);
     sidebar->setGuildId(guildId);
     sidebar->setSelectedChannel(channelId);
+
+    auto scrollIt = m_guildSidebarScrollOffsets.find(guildId);
+    if (scrollIt != m_guildSidebarScrollOffsets.end()) {
+        sidebar->setScrollOffset(scrollIt->second);
+    }
+
     sidebar->setOnChannelSelected(
         [guildId](const std::string &newChannelId) { Router::navigate("/channels/" + guildId + "/" + newChannelId); });
 
@@ -202,8 +219,6 @@ void MainLayoutScreen::createGuildChannelView(const std::string &guildId, const 
 
 void MainLayoutScreen::setupNavigationCallbacks() {
     m_guildBar->setOnGuildSelected([](const std::string &guildId) {
-        // Navigate to the first channel (placeholder channel ID "1" which is "general")
-        // In a real implementation, this would query the Store for the guild's first text channel
         Logger::info("Guild selected: " + guildId);
         Router::navigate("/channels/" + guildId + "/1");
     });

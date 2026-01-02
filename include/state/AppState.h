@@ -1,13 +1,17 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+#include "models/Channel.h"
 #include "models/GuildFolder.h"
 #include "models/GuildInfo.h"
+#include "models/GuildMember.h"
+#include "models/Role.h"
 
 struct CustomStatus {
     std::string text;
@@ -68,4 +72,8 @@ struct AppState {
     std::vector<GuildFolder> guildFolders;
     std::vector<uint64_t> guildPositions;
     std::vector<GuildInfo> guilds;
+    std::vector<std::shared_ptr<DMChannel>> privateChannels;
+    std::unordered_map<std::string, std::vector<std::shared_ptr<GuildChannel>>> guildChannels;
+    std::unordered_map<std::string, GuildMember> guildMembers;
+    std::unordered_map<std::string, std::vector<Role>> guildRoles;
 };
