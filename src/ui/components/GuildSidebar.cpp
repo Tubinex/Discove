@@ -2,11 +2,15 @@
 
 #include "state/AppState.h"
 #include "state/Store.h"
+#include "ui/AnimationManager.h"
+#include "ui/GifAnimation.h"
 #include "ui/IconManager.h"
 #include "ui/LayoutConstants.h"
 #include "ui/RoundedWidget.h"
 #include "ui/Theme.h"
+#include "utils/CDN.h"
 #include "utils/Fonts.h"
+#include "utils/Images.h"
 #include "utils/Logger.h"
 #include "utils/Permissions.h"
 
@@ -14,6 +18,9 @@
 #include <FL/fl_draw.H>
 
 #include <algorithm>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <map>
 
 GuildSidebar::GuildSidebar(int x, int y, int w, int h, const char *label) : Fl_Group(x, y, w, h, label) {
@@ -22,7 +29,7 @@ GuildSidebar::GuildSidebar(int x, int y, int w, int h, const char *label) : Fl_G
     end();
 }
 
-GuildSidebar::~GuildSidebar() {}
+GuildSidebar::~GuildSidebar() { stopBannerAnimation(); }
 
 void GuildSidebar::draw() {
     fl_push_clip(x(), y(), w(), h());
@@ -30,11 +37,11 @@ void GuildSidebar::draw() {
     fl_color(ThemeColors::BG_SECONDARY);
     fl_rectf(x(), y(), w(), h());
 
-    fl_color(ThemeColors::BG_TERTIARY);
-    fl_line(x(), y(), x(), y() + h());
+    int headerHeight = getHeaderHeight();
 
-    drawServerHeader();
-    int currentY = y() + HEADER_HEIGHT - m_scrollOffset;
+    fl_push_clip(x(), y() + headerHeight, w(), h() - headerHeight);
+
+    int currentY = y() + headerHeight - m_scrollOffset;
 
     currentY += 16;
 
@@ -74,21 +81,151 @@ void GuildSidebar::draw() {
     }
 
     fl_pop_clip();
+
+    drawServerHeader();
+
+    fl_color(ThemeColors::BG_TERTIARY);
+    fl_line(x(), y(), x(), y() + h());
+
+    fl_pop_clip();
+}
+
+int GuildSidebar::getHeaderHeight() const {
+    return m_bannerImage ? LayoutConstants::kGuildBannerHeight : LayoutConstants::kGuildSimpleHeaderHeight;
 }
 
 void GuildSidebar::drawServerHeader() {
-    fl_color(ThemeColors::TEXT_NORMAL);
-    fl_font(FontLoader::Fonts::INTER_SEMIBOLD, 15);
-
-    int textY = y() + 18;
-    const int leftMargin = 8;
-    fl_draw(m_guildName.c_str(), x() + leftMargin + 8, textY);
-
-    fl_font(FontLoader::Fonts::INTER_REGULAR, 12);
-    fl_draw("▼", x() + w() - 24, textY);
+    if (m_bannerImage) {
+        drawBanner();
+    } else {
+        drawSimpleHeader();
+    }
 
     fl_color(ThemeColors::BG_TERTIARY);
-    fl_line(x(), y() + HEADER_HEIGHT - 1, x() + w(), y() + HEADER_HEIGHT - 1);
+    fl_line(x() + 1, y() + getHeaderHeight() - 1, x() + w(), y() + getHeaderHeight() - 1);
+}
+
+void GuildSidebar::drawSimpleHeader() {
+    fl_color(ThemeColors::BG_SECONDARY);
+    fl_rectf(x(), y(), w(), LayoutConstants::kGuildSimpleHeaderHeight);
+
+    fl_color(ThemeColors::TEXT_NORMAL);
+    fl_font(FontLoader::Fonts::INTER_SEMIBOLD, LayoutConstants::kGuildHeaderFontSize);
+
+    int textY = y() + (LayoutConstants::kGuildSimpleHeaderHeight / 2) + (LayoutConstants::kGuildHeaderFontSize / 2) - 2;
+    const int leftMargin = 16;
+    fl_draw(m_guildName.c_str(), x() + leftMargin, textY);
+
+    fl_font(FontLoader::Fonts::INTER_REGULAR, LayoutConstants::kDropdownIconFontSize);
+    fl_draw("▼", x() + w() - 24, textY - 2);
+}
+
+void GuildSidebar::drawBanner() {
+    int bannerY = y();
+    int bannerW = w();
+    const int bannerHeight = LayoutConstants::kGuildBannerHeight;
+
+    Fl_RGB_Image *sourceImage = nullptr;
+    if (m_bannerGif && m_bannerGif->isValid()) {
+        sourceImage = m_bannerGif->currentFrame();
+    } else if (m_bannerImage) {
+        sourceImage = m_bannerImage;
+    }
+
+    if (sourceImage && sourceImage->w() > 0 && sourceImage->h() > 0) {
+        fl_push_clip(x(), bannerY, bannerW, bannerHeight);
+
+        const int depth = sourceImage->d();
+        if (depth < 3) {
+            Fl_RGB_Image *scaled = (Fl_RGB_Image *)sourceImage->copy(bannerW, bannerHeight);
+            if (scaled) {
+                scaled->draw(x(), bannerY);
+                delete scaled;
+            }
+            fl_pop_clip();
+            return;
+        }
+
+        const float targetAspect = 2.4f;
+        const float sourceAspect = static_cast<float>(sourceImage->w()) / static_cast<float>(sourceImage->h());
+
+        int cropX = 0, cropY = 0, cropW = sourceImage->w(), cropH = sourceImage->h();
+        if (sourceAspect > targetAspect) {
+            cropW = static_cast<int>(sourceImage->h() * targetAspect);
+            cropX = (sourceImage->w() - cropW) / 2;
+        } else if (sourceAspect < targetAspect) {
+            cropH = static_cast<int>(sourceImage->w() / targetAspect);
+            cropY = (sourceImage->h() - cropH) / 2;
+        }
+
+        const char *const *dataArray = sourceImage->data();
+        if (!dataArray || !dataArray[0]) {
+            fl_pop_clip();
+            return;
+        }
+
+        const int srcLineSize = sourceImage->w() * depth;
+        const int dstLineSize = bannerW * depth;
+
+        unsigned char *finalData = new unsigned char[bannerW * bannerHeight * depth];
+
+        const int gradientHeight = 64;
+        const unsigned char darkR = 26;
+        const unsigned char darkG = 26;
+        const unsigned char darkB = 30;
+
+        for (int dstY = 0; dstY < bannerHeight; dstY++) {
+            int srcY = cropY + (dstY * cropH) / bannerHeight;
+            const unsigned char *srcRow = reinterpret_cast<const unsigned char *>(dataArray[0]) + (srcY * srcLineSize);
+            unsigned char *dstRow = finalData + (dstY * dstLineSize);
+
+            float alpha = 0.0f;
+            if (dstY < gradientHeight) {
+                float progress = static_cast<float>(dstY) / gradientHeight;
+                float easedProgress = progress * progress * progress;
+                alpha = (1.0f - easedProgress) * 0.8f;
+            }
+
+            for (int dstX = 0; dstX < bannerW; dstX++) {
+                int srcX = cropX + (dstX * cropW) / bannerW;
+                const unsigned char *srcPixel = srcRow + (srcX * depth);
+                unsigned char *dstPixel = dstRow + (dstX * depth);
+
+                if (alpha > 0.0f) {
+                    dstPixel[0] = static_cast<unsigned char>(srcPixel[0] * (1.0f - alpha) + darkR * alpha);
+                    dstPixel[1] = static_cast<unsigned char>(srcPixel[1] * (1.0f - alpha) + darkG * alpha);
+                    dstPixel[2] = static_cast<unsigned char>(srcPixel[2] * (1.0f - alpha) + darkB * alpha);
+                } else {
+                    dstPixel[0] = srcPixel[0];
+                    dstPixel[1] = srcPixel[1];
+                    dstPixel[2] = srcPixel[2];
+                }
+
+                if (depth == 4) {
+                    dstPixel[3] = srcPixel[3];
+                }
+            }
+        }
+
+        Fl_RGB_Image *finalImage = new Fl_RGB_Image(finalData, bannerW, bannerHeight, depth);
+        finalImage->alloc_array = 1;
+        finalImage->draw(x(), bannerY);
+        delete finalImage;
+
+        fl_pop_clip();
+    } else {
+        fl_color(ThemeColors::BG_TERTIARY);
+        fl_rectf(x(), bannerY, bannerW, bannerHeight);
+    }
+
+    const int leftMargin = 16;
+    fl_color(FL_WHITE);
+    fl_font(FontLoader::Fonts::INTER_SEMIBOLD, LayoutConstants::kGuildBannerFontSize);
+    int textY = bannerY + 16 + LayoutConstants::kGuildBannerFontSize;
+    fl_draw(m_guildName.c_str(), x() + leftMargin, textY);
+
+    fl_font(FontLoader::Fonts::INTER_REGULAR, LayoutConstants::kDropdownIconFontSize);
+    fl_draw("▼", x() + w() - 24, textY - 2);
 }
 
 void GuildSidebar::drawChannelCategory(const char *title, int &yPos, bool collapsed, int channelCount, bool hovered) {
@@ -99,7 +236,7 @@ void GuildSidebar::drawChannelCategory(const char *title, int &yPos, bool collap
     int textY = yPos + 19;
     const int leftMargin = 8;
 
-    int textX = x() + leftMargin + INDENT;
+    int textX = x() + leftMargin + LayoutConstants::kIndent;
     fl_draw(title, textX, textY);
 
     int textWidth = static_cast<int>(fl_width(title));
@@ -269,6 +406,105 @@ void GuildSidebar::setGuild(const std::string &guildId, const std::string &guild
     redraw();
 }
 
+void GuildSidebar::setBannerUrl(const std::string &bannerUrl) {
+    if (m_bannerUrl != bannerUrl) {
+        m_bannerUrl = bannerUrl;
+        m_bannerImage = nullptr;
+        if (!m_bannerUrl.empty()) {
+            loadBannerImage();
+        }
+        redraw();
+    }
+}
+
+void GuildSidebar::setBoostInfo(int premiumTier, int subscriptionCount) {
+    m_premiumTier = premiumTier;
+    m_subscriptionCount = subscriptionCount;
+    redraw();
+}
+
+void GuildSidebar::loadBannerImage() {
+    if (m_bannerUrl.empty())
+        return;
+
+    Images::loadImageAsync(m_bannerUrl, [this](Fl_RGB_Image *image) {
+        if (image) {
+            m_bannerImage = image;
+
+            if (m_isAnimatedBanner && ensureBannerGifLoaded()) {
+                startBannerAnimation();
+            }
+
+            Fl::awake(
+                [](void *data) {
+                    GuildSidebar *sidebar = static_cast<GuildSidebar *>(data);
+                    sidebar->redraw();
+                },
+                this);
+        }
+    });
+}
+
+bool GuildSidebar::ensureBannerGifLoaded() {
+    if (!m_isAnimatedBanner)
+        return false;
+    if (m_bannerGif)
+        return true;
+
+    std::string gifPath = Images::getCacheFilePath(m_bannerUrl, "gif");
+
+    if (!std::filesystem::exists(gifPath)) {
+        Logger::debug("GIF not yet cached for animated banner: " + m_guildId);
+        return false;
+    }
+
+    try {
+        m_bannerGif = std::make_unique<GifAnimation>(gifPath, GifAnimation::ScalingStrategy::Lazy);
+        if (!m_bannerGif->isValid()) {
+            Logger::warn("Failed to load GIF animation from: " + gifPath);
+            m_bannerGif.reset();
+            return false;
+        }
+        Logger::debug("Loaded GIF animation for guild banner: " + m_guildId);
+        return true;
+    } catch (const std::exception &e) {
+        Logger::error("Exception loading GIF animation: " + std::string(e.what()));
+        m_bannerGif.reset();
+        return false;
+    }
+}
+
+bool GuildSidebar::updateBannerAnimation() {
+    if (!m_bannerGif || !m_bannerGif->isAnimated())
+        return false;
+
+    m_frameTimeAccumulated += AnimationManager::get().getFrameTime();
+    double requiredDelay = m_bannerGif->currentDelay() / 1000.0;
+
+    if (m_frameTimeAccumulated >= requiredDelay) {
+        m_bannerGif->nextFrame();
+        m_frameTimeAccumulated = 0.0;
+        redraw();
+    }
+
+    return true;
+}
+
+void GuildSidebar::startBannerAnimation() {
+    if (!m_bannerGif || !m_bannerGif->isAnimated() || m_bannerAnimationId != 0)
+        return;
+
+    auto &animMgr = AnimationManager::get();
+    m_bannerAnimationId = animMgr.registerAnimation([this]() { return updateBannerAnimation(); });
+}
+
+void GuildSidebar::stopBannerAnimation() {
+    if (m_bannerAnimationId != 0) {
+        AnimationManager::get().unregisterAnimation(m_bannerAnimationId);
+        m_bannerAnimationId = 0;
+    }
+}
+
 void GuildSidebar::addTextChannel(const std::string &channelId, const std::string &channelName) {
     ChannelItem item;
     item.id = channelId;
@@ -337,6 +573,14 @@ void GuildSidebar::setGuildId(const std::string &guildId) {
     for (const auto &guild : state.guilds) {
         if (guild.id == m_guildId) {
             m_guildName = guild.name;
+            m_premiumTier = guild.premiumTier;
+            m_subscriptionCount = guild.premiumSubscriptionCount;
+            if (!guild.banner.empty()) {
+                m_bannerHash = guild.banner;
+                m_isAnimatedBanner = !guild.banner.empty() && guild.banner.rfind("a_", 0) == 0;
+                std::string bannerUrl = CDNUtils::getGuildBannerUrl(guild.id, guild.banner, 1024);
+                setBannerUrl(bannerUrl);
+            }
             break;
         }
     }
@@ -479,7 +723,7 @@ int GuildSidebar::getCategoryAt(int mx, int my) const {
 }
 
 int GuildSidebar::calculateContentHeight() const {
-    int totalHeight = HEADER_HEIGHT;
+    int totalHeight = getHeaderHeight();
 
     totalHeight += 16;
     totalHeight += m_uncategorizedChannels.size() * CHANNEL_HEIGHT;

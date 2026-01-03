@@ -3,8 +3,14 @@
 #include <FL/Fl_Group.H>
 #include <FL/Fl_Widget.H>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
+
+#include "ui/AnimationManager.h"
+
+class Fl_RGB_Image;
+class GifAnimation;
 
 class GuildSidebar : public Fl_Group {
   public:
@@ -20,6 +26,19 @@ class GuildSidebar : public Fl_Group {
      * @param guildName Guild name
      */
     void setGuild(const std::string &guildId, const std::string &guildName);
+
+    /**
+     * @brief Set the guild banner URL
+     * @param bannerUrl CDN URL for the guild banner
+     */
+    void setBannerUrl(const std::string &bannerUrl);
+
+    /**
+     * @brief Set the guild boost information
+     * @param premiumTier Premium tier (0-3)
+     * @param subscriptionCount Number of boosts
+     */
+    void setBoostInfo(int premiumTier, int subscriptionCount);
 
     /**
      * @brief Set the guild ID and load channels from Store
@@ -96,6 +115,15 @@ class GuildSidebar : public Fl_Group {
 
     std::string m_guildId;
     std::string m_guildName;
+    std::string m_bannerUrl;
+    std::string m_bannerHash;
+    Fl_RGB_Image *m_bannerImage = nullptr;
+    std::unique_ptr<GifAnimation> m_bannerGif;
+    AnimationManager::AnimationId m_bannerAnimationId = 0;
+    bool m_isAnimatedBanner = false;
+    double m_frameTimeAccumulated = 0.0;
+    int m_premiumTier = 0;
+    int m_subscriptionCount = 0;
     std::vector<CategoryItem> m_categories;
     std::vector<ChannelItem> m_uncategorizedChannels;
     std::string m_selectedChannelId;
@@ -104,15 +132,22 @@ class GuildSidebar : public Fl_Group {
     int m_scrollOffset = 0;
     std::function<void(const std::string &)> m_onChannelSelected;
 
-    static constexpr int HEADER_HEIGHT = 48;
     static constexpr int CHANNEL_HEIGHT = 36;
     static constexpr int CATEGORY_HEIGHT = 40;
-    static constexpr int INDENT = 8;
+
+    int getHeaderHeight() const;
 
     void drawServerHeader();
+    void drawSimpleHeader();
+    void drawBanner();
     void drawChannelCategory(const char *title, int &yPos, bool collapsed, int channelCount, bool hovered);
     void drawChannel(const ChannelItem &channel, int yPos, bool selected, bool hovered);
     int getChannelAt(int mx, int my, std::string &categoryId) const;
     int getCategoryAt(int mx, int my) const;
     int calculateContentHeight() const;
+    void loadBannerImage();
+    bool ensureBannerGifLoaded();
+    bool updateBannerAnimation();
+    void startBannerAnimation();
+    void stopBannerAnimation();
 };

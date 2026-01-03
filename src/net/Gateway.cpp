@@ -607,6 +607,14 @@ void Gateway::handleReady(const Json &data) {
                     guild.banner = props["banner"].get<std::string>();
                     guildInfo.banner = guild.banner;
                 }
+
+                if (props.contains("premium_tier") && props["premium_tier"].is_number()) {
+                    guildInfo.premiumTier = props["premium_tier"].get<int>();
+                }
+
+                if (props.contains("premium_subscription_count") && props["premium_subscription_count"].is_number()) {
+                    guildInfo.premiumSubscriptionCount = props["premium_subscription_count"].get<int>();
+                }
             } else {
                 if (guildJson.contains("name") && guildJson["name"].is_string()) {
                     guild.name = guildJson["name"].get<std::string>();
@@ -621,6 +629,15 @@ void Gateway::handleReady(const Json &data) {
                 if (guildJson.contains("banner") && guildJson["banner"].is_string()) {
                     guild.banner = guildJson["banner"].get<std::string>();
                     guildInfo.banner = guild.banner;
+                }
+
+                if (guildJson.contains("premium_tier") && guildJson["premium_tier"].is_number()) {
+                    guildInfo.premiumTier = guildJson["premium_tier"].get<int>();
+                }
+
+                if (guildJson.contains("premium_subscription_count") &&
+                    guildJson["premium_subscription_count"].is_number()) {
+                    guildInfo.premiumSubscriptionCount = guildJson["premium_subscription_count"].get<int>();
                 }
             }
 

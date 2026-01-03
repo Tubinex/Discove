@@ -79,7 +79,7 @@ std::string getGuildDiscoverySplashUrl(const std::string &guildId, const std::st
 
 std::string getGuildBannerUrl(const std::string &guildId, const std::string &bannerHash, int size) {
     int normalizedSize = normalizeSize(size);
-    std::string ext = getImageExtension(bannerHash);
+    std::string ext = getImageExtension(bannerHash, false);
     std::ostringstream url;
     url << CDN_BASE << "/banners/" << guildId << "/" << bannerHash << ext << "?size=" << normalizedSize;
     return url.str();

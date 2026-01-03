@@ -20,6 +20,16 @@ inline int normalizeSize(int size) {
         return 48;
     if (size <= 64)
         return 64;
+    if (size <= 128)
+        return 128;
+    if (size <= 256)
+        return 256;
+    if (size <= 512)
+        return 512;
+    if (size <= 1024)
+        return 1024;
+    if (size <= 2048)
+        return 2048;
     return 128;
 }
 

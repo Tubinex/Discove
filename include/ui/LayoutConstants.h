@@ -21,4 +21,11 @@ constexpr int kChannelIconPadding = 8;
 constexpr int kChannelTextPadding = 36;
 constexpr int kIndent = 8;
 
+constexpr int kGuildBannerHeight = 126;
+constexpr int kGuildSimpleHeaderHeight = 48;
+
+constexpr int kGuildHeaderFontSize = 15;
+constexpr int kGuildBannerFontSize = 16;
+constexpr int kDropdownIconFontSize = 12;
+
 } // namespace LayoutConstants
