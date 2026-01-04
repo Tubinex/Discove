@@ -21,11 +21,9 @@ class GuildIcon : public Fl_Box {
 
     const std::string &guildId() const { return guildId_; }
 
-    void setSelected(bool selected) {
-        isSelected_ = selected;
-        redraw();
-    }
+    void setSelected(bool selected);
     bool isSelected() const { return isSelected_; }
+    void setIndicatorsEnabled(bool enabled);
 
     void setCornerRadius(int radius) {
         cornerRadius_ = radius;
@@ -46,6 +44,9 @@ class GuildIcon : public Fl_Box {
     void startAnimation();
     void stopAnimation();
     bool ensureGifLoaded();
+    void startIndicatorAnimation();
+    bool updateIndicatorAnimation();
+    float indicatorTargetHeight() const;
 
     Fl_Image *image_{nullptr};
     std::unique_ptr<GifAnimation> gifAnimation_;
@@ -60,6 +61,9 @@ class GuildIcon : public Fl_Box {
     bool isHovered_{false};
     bool animationRunning_{false};
     bool isSelected_{false};
+    bool indicatorsEnabled_{true};
+    float indicatorHeight_{0.0f};
+    AnimationManager::AnimationId indicatorAnimationId_{0};
     AnimationManager::AnimationId animationId_{0};
     double frameTimeAccumulated_{0.0};
     std::function<void(const std::string &)> onClickCallback_;

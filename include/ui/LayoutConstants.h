@@ -28,4 +28,9 @@ constexpr int kGuildHeaderFontSize = 15;
 constexpr int kGuildBannerFontSize = 16;
 constexpr int kDropdownIconFontSize = 12;
 
+constexpr int kGuildIndicatorWidth = 8;
+constexpr int kGuildIndicatorInset = -4;
+constexpr int kGuildHoverIndicatorMinHeight = 12;
+constexpr float kGuildIndicatorAnimationSpeed = 240.0f;
+
 } // namespace LayoutConstants

@@ -5,13 +5,18 @@
 #include <FL/Fl_Window.H>
 #include <FL/fl_draw.H>
 
+#include "ui/components/GuildFolderWidget.h"
+
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <mutex>
 #include <unordered_set>
 
 #include "ui/GifAnimation.h"
+#include "ui/LayoutConstants.h"
 #include "ui/Theme.h"
+#include "ui/components/GuildBar.h"
 #include "utils/CDN.h"
 #include "utils/Images.h"
 #include "utils/Logger.h"
@@ -23,6 +28,48 @@
 namespace {
 std::unordered_set<GuildIcon *> validIcons;
 std::mutex iconsMutex;
+
+int getGuildBarLeftX(const Fl_Widget *widget) {
+    const Fl_Widget *current = widget;
+    while (current) {
+        if (dynamic_cast<const GuildBar *>(current)) {
+            return current->x() + LayoutConstants::kGuildIndicatorInset;
+        }
+        current = current->parent();
+    }
+    return widget ? widget->x() : 0;
+}
+
+void invalidateIndicatorArea(Fl_Widget *widget, int height) {
+    if (!widget) {
+        return;
+    }
+
+    int leftX = getGuildBarLeftX(widget);
+    int rightX = widget->x() + widget->w();
+    int damageW = std::max(0, rightX - leftX);
+    widget->damage(FL_DAMAGE_USER1, leftX, widget->y(), damageW, height);
+}
+
+void drawIndicatorBar(int leftX, int y, int height, Fl_Color color) {
+    int barHeight = height;
+    const int width = LayoutConstants::kGuildIndicatorWidth;
+    if (barHeight < width) {
+        barHeight = width;
+    }
+
+    fl_color(color);
+    if (barHeight <= width) {
+        fl_rectf(leftX, y, width, barHeight);
+        return;
+    }
+
+    int radius = width / 2;
+    fl_rectf(leftX, y, width - radius, barHeight);
+    fl_rectf(leftX + width - radius, y + radius, radius, barHeight - (radius * 2));
+    fl_pie(leftX + width - (radius * 2), y, radius * 2, radius * 2, 0, 90);
+    fl_pie(leftX + width - (radius * 2), y + barHeight - (radius * 2), radius * 2, radius * 2, 270, 360);
+}
 } // namespace
 
 GuildIcon::GuildIcon(int x, int y, int size, const std::string &guildId, const std::string &iconHash,
@@ -66,6 +113,10 @@ GuildIcon::~GuildIcon() {
         validIcons.erase(this);
     }
     stopAnimation();
+    if (indicatorAnimationId_ != 0) {
+        AnimationManager::get().unregisterAnimation(indicatorAnimationId_);
+        indicatorAnimationId_ = 0;
+    }
 }
 
 int GuildIcon::handle(int event) {
@@ -75,7 +126,7 @@ int GuildIcon::handle(int event) {
         if (isAnimated_ && ensureGifLoaded()) {
             startAnimation();
         }
-        redraw();
+        startIndicatorAnimation();
         return 1;
 
     case FL_LEAVE:
@@ -83,7 +134,7 @@ int GuildIcon::handle(int event) {
         if (isAnimated_ && gifAnimation_) {
             stopAnimation();
         }
-        redraw();
+        startIndicatorAnimation();
         return 1;
 
     case FL_PUSH:
@@ -97,12 +148,78 @@ int GuildIcon::handle(int event) {
     }
 }
 
+void GuildIcon::setSelected(bool selected) {
+    if (isSelected_ == selected) {
+        return;
+    }
+    isSelected_ = selected;
+    startIndicatorAnimation();
+    if (auto *folder = dynamic_cast<GuildFolderWidget *>(parent())) {
+        folder->notifyChildSelectionChanged();
+    }
+}
+
+void GuildIcon::setIndicatorsEnabled(bool enabled) {
+    if (indicatorsEnabled_ == enabled) {
+        return;
+    }
+    indicatorsEnabled_ = enabled;
+    startIndicatorAnimation();
+}
+
+float GuildIcon::indicatorTargetHeight() const {
+    if (!indicatorsEnabled_) {
+        return 0.0f;
+    }
+    if (isSelected_) {
+        return static_cast<float>(h());
+    }
+    if (isHovered_) {
+        return static_cast<float>(
+            std::max(LayoutConstants::kGuildHoverIndicatorMinHeight, h() / 2));
+    }
+    return 0.0f;
+}
+
+void GuildIcon::startIndicatorAnimation() {
+    float target = indicatorTargetHeight();
+    if (std::abs(indicatorHeight_ - target) <= 0.5f) {
+        indicatorHeight_ = target;
+        return;
+    }
+    if (indicatorAnimationId_ != 0) {
+        return;
+    }
+    indicatorAnimationId_ = AnimationManager::get().registerAnimation([this]() {
+        return updateIndicatorAnimation();
+    });
+}
+
+bool GuildIcon::updateIndicatorAnimation() {
+    float target = indicatorTargetHeight();
+    float delta = LayoutConstants::kGuildIndicatorAnimationSpeed * AnimationManager::get().getFrameTime();
+
+    if (indicatorHeight_ < target) {
+        indicatorHeight_ = std::min(indicatorHeight_ + delta, target);
+    } else if (indicatorHeight_ > target) {
+        indicatorHeight_ = std::max(indicatorHeight_ - delta, target);
+    }
+
+    invalidateIndicatorArea(this, h());
+
+    if (std::abs(indicatorHeight_ - target) <= 0.5f) {
+        indicatorHeight_ = target;
+        indicatorAnimationId_ = 0;
+        return false;
+    }
+
+    return true;
+}
+
 void GuildIcon::startAnimation() {
     if (!animationRunning_ && gifAnimation_ && gifAnimation_->isAnimated()) {
         animationRunning_ = true;
-        animationId_ = AnimationManager::get().registerAnimation([this]() {
-            return updateAnimation();
-        });
+        animationId_ = AnimationManager::get().registerAnimation([this]() { return updateAnimation(); });
     }
 }
 
@@ -120,11 +237,11 @@ bool GuildIcon::updateAnimation() {
     if (!gifAnimation_ || !gifAnimation_->isAnimated() || !animationRunning_) {
         animationId_ = 0;
         animationRunning_ = false;
-        return false; 
+        return false;
     }
 
     if (window() && !window()->shown()) {
-        return true; 
+        return true;
     }
 
     frameTimeAccumulated_ += AnimationManager::get().getFrameTime();
@@ -173,11 +290,10 @@ bool GuildIcon::ensureGifLoaded() {
 }
 
 void GuildIcon::draw() {
-    if (isSelected_) {
-        fl_color(FL_WHITE);
-        int barHeight = h();
-        int barY = y();
-        fl_rectf(x() - 8, barY, 4, barHeight);
+    if (indicatorHeight_ > 0.5f) {
+        int indicatorHeight = static_cast<int>(indicatorHeight_);
+        int indicatorY = y() + (h() - indicatorHeight) / 2;
+        drawIndicatorBar(getGuildBarLeftX(this), indicatorY, indicatorHeight, ThemeColors::TEXT_NORMAL);
     }
 
     Fl_Image *displayImage = nullptr;

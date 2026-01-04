@@ -23,6 +23,36 @@
 #include <fstream>
 #include <map>
 
+namespace {
+std::string ellipsizeText(const std::string &text, int maxWidth) {
+    if (maxWidth <= 0) {
+        return "";
+    }
+
+    int fullWidth = static_cast<int>(fl_width(text.c_str()));
+    if (fullWidth <= maxWidth) {
+        return text;
+    }
+
+    const char *ellipsis = "...";
+    int ellipsisWidth = static_cast<int>(fl_width(ellipsis));
+    if (ellipsisWidth >= maxWidth) {
+        return "";
+    }
+
+    std::string truncated = text;
+    while (!truncated.empty()) {
+        truncated.pop_back();
+        int width = static_cast<int>(fl_width(truncated.c_str()));
+        if (width <= maxWidth - ellipsisWidth) {
+            break;
+        }
+    }
+
+    return truncated.empty() ? std::string(ellipsis) : truncated + ellipsis;
+}
+} // namespace
+
 std::map<std::string, std::map<std::string, bool>> GuildSidebar::s_guildCategoryCollapsedState;
 
 GuildSidebar::GuildSidebar(int x, int y, int w, int h, const char *label) : Fl_Group(x, y, w, h, label) {
@@ -312,7 +342,10 @@ void GuildSidebar::drawChannel(const ChannelItem &channel, int yPos, bool select
     fl_font(FontLoader::Fonts::INTER_MEDIUM, 16);
     int textX = itemX + LayoutConstants::kChannelTextPadding;
     int textY = itemY + (itemH / 2) + 6;
-    fl_draw(channel.name.c_str(), textX, textY);
+    int rightPadding = (channel.hasUnread && !selected) ? 24 : 12;
+    int maxTextWidth = itemX + itemW - rightPadding - textX;
+    std::string label = ellipsizeText(channel.name, maxTextWidth);
+    fl_draw(label.c_str(), textX, textY);
 
     if (channel.hasUnread && !selected) {
         fl_color(FL_WHITE);

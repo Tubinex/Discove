@@ -30,6 +30,7 @@ class GuildFolderWidget : public Fl_Group {
     bool isExpanded() const { return expanded_; }
 
     void layoutIcons();
+    void notifyChildSelectionChanged();
 
   protected:
     void draw() override;
@@ -39,6 +40,9 @@ class GuildFolderWidget : public Fl_Group {
     void resize(int x, int y, int w, int h) override;
 
     bool updateAnimation();
+    bool updateIndicatorAnimation();
+    void startIndicatorAnimation();
+    float indicatorTargetHeight() const;
     int getCollapsedHeight() const { return iconSize_; }
     int getExpandedHeight() const {
         const int folderIconSize = static_cast<int>(iconSize_ * 0.85);
@@ -58,4 +62,6 @@ class GuildFolderWidget : public Fl_Group {
     float animationProgress_{0.0f};
     bool targetExpanded_{false};
     AnimationManager::AnimationId animationId_{0};
+    float indicatorHeight_{0.0f};
+    AnimationManager::AnimationId indicatorAnimationId_{0};
 };

@@ -3,11 +3,48 @@
 #include <FL/Fl.H>
 #include <FL/fl_draw.H>
 
+#include <algorithm>
+#include <cmath>
+
 #include "ui/AnimationManager.h"
 #include "ui/IconManager.h"
+#include "ui/LayoutConstants.h"
 #include "ui/Theme.h"
 #include "ui/components/GuildBar.h"
 #include "ui/components/GuildIcon.h"
+
+namespace {
+int getGuildBarLeftX(const Fl_Widget *widget) {
+    const Fl_Widget *current = widget;
+    while (current) {
+        if (dynamic_cast<const GuildBar *>(current)) {
+            return current->x() + LayoutConstants::kGuildIndicatorInset;
+        }
+        current = current->parent();
+    }
+    return widget ? widget->x() : 0;
+}
+
+void drawIndicatorBar(int leftX, int y, int height, Fl_Color color) {
+    int barHeight = height;
+    const int width = LayoutConstants::kGuildIndicatorWidth;
+    if (barHeight < width) {
+        barHeight = width;
+    }
+
+    fl_color(color);
+    if (barHeight <= width) {
+        fl_rectf(leftX, y, width, barHeight);
+        return;
+    }
+
+    int radius = width / 2;
+    fl_rectf(leftX, y, width - radius, barHeight);
+    fl_rectf(leftX + width - radius, y + radius, radius, barHeight - (radius * 2));
+    fl_pie(leftX + width - (radius * 2), y, radius * 2, radius * 2, 0, 90);
+    fl_pie(leftX + width - (radius * 2), y + barHeight - (radius * 2), radius * 2, radius * 2, 270, 360);
+}
+} // namespace
 
 GuildFolderWidget::GuildFolderWidget(int x, int y, int size) : Fl_Group(x, y, size, size), iconSize_(size) {
     box(FL_NO_BOX);
@@ -18,6 +55,9 @@ GuildFolderWidget::GuildFolderWidget(int x, int y, int size) : Fl_Group(x, y, si
 GuildFolderWidget::~GuildFolderWidget() {
     if (animationId_ != 0) {
         AnimationManager::get().unregisterAnimation(animationId_);
+    }
+    if (indicatorAnimationId_ != 0) {
+        AnimationManager::get().unregisterAnimation(indicatorAnimationId_);
     }
 }
 
@@ -57,6 +97,7 @@ void GuildFolderWidget::layoutIcons() {
             icon->setCornerRadius(gridIconSize / 2);
             icon->setMaskColor(folderColor);
             icon->setFallbackFontSize(14);
+            icon->setIndicatorsEnabled(false);
             icon->show();
         } else if (showExpanded) {
             int expandedX = x() + expandedPadding;
@@ -66,8 +107,10 @@ void GuildFolderWidget::layoutIcons() {
             icon->setCornerRadius(10);
             icon->setMaskColor(folderColor);
             icon->setFallbackFontSize(20);
+            icon->setIndicatorsEnabled(true);
             icon->show();
         } else {
+            icon->setIndicatorsEnabled(false);
             icon->hide();
         }
     }
@@ -136,6 +179,7 @@ bool GuildFolderWidget::updateAnimation() {
     Fl_Group::resize(x(), y(), w(), currentHeight);
 
     layoutIcons();
+    startIndicatorAnimation();
     redraw();
 
     if (parent()) {
@@ -158,12 +202,12 @@ int GuildFolderWidget::handle(int event) {
     switch (event) {
     case FL_ENTER:
         hovered_ = true;
-        redraw();
+        startIndicatorAnimation();
         return 1;
 
     case FL_LEAVE:
         hovered_ = false;
-        redraw();
+        startIndicatorAnimation();
         return 1;
 
     case FL_PUSH:
@@ -178,7 +222,68 @@ int GuildFolderWidget::handle(int event) {
     }
 }
 
+void GuildFolderWidget::notifyChildSelectionChanged() { startIndicatorAnimation(); }
+
+float GuildFolderWidget::indicatorTargetHeight() const {
+    if (expanded_ || animationProgress_ >= 0.5f) {
+        return 0.0f;
+    }
+
+    bool hasSelectedChild = std::any_of(guildIcons_.begin(), guildIcons_.end(),
+                                        [](const GuildIcon *icon) { return icon && icon->isSelected(); });
+    if (hasSelectedChild) {
+        return static_cast<float>(iconSize_);
+    }
+
+    if (hovered_) {
+        return static_cast<float>(
+            std::max(LayoutConstants::kGuildHoverIndicatorMinHeight, iconSize_ / 2));
+    }
+
+    return 0.0f;
+}
+
+void GuildFolderWidget::startIndicatorAnimation() {
+    float target = indicatorTargetHeight();
+    if (std::abs(indicatorHeight_ - target) <= 0.5f) {
+        indicatorHeight_ = target;
+        return;
+    }
+    if (indicatorAnimationId_ != 0) {
+        return;
+    }
+    indicatorAnimationId_ = AnimationManager::get().registerAnimation([this]() { return updateIndicatorAnimation(); });
+}
+
+bool GuildFolderWidget::updateIndicatorAnimation() {
+    float target = indicatorTargetHeight();
+    float delta = LayoutConstants::kGuildIndicatorAnimationSpeed * AnimationManager::get().getFrameTime();
+
+    if (indicatorHeight_ < target) {
+        indicatorHeight_ = std::min(indicatorHeight_ + delta, target);
+    } else if (indicatorHeight_ > target) {
+        indicatorHeight_ = std::max(indicatorHeight_ - delta, target);
+    }
+
+    int leftX = getGuildBarLeftX(this);
+    damage(FL_DAMAGE_USER1, leftX, y(), w() + (x() - leftX), iconSize_);
+
+    if (std::abs(indicatorHeight_ - target) <= 0.5f) {
+        indicatorHeight_ = target;
+        indicatorAnimationId_ = 0;
+        return false;
+    }
+
+    return true;
+}
+
 void GuildFolderWidget::draw() {
+    if (indicatorHeight_ > 0.5f) {
+        int indicatorHeight = static_cast<int>(indicatorHeight_);
+        int indicatorY = y() + (iconSize_ - indicatorHeight) / 2;
+        drawIndicatorBar(getGuildBarLeftX(this), indicatorY, indicatorHeight, ThemeColors::TEXT_NORMAL);
+    }
+
     Fl_Color folderColor = color_ ? color_ : ThemeColors::BG_TERTIARY;
 
     const int r = cornerRadius_;
@@ -190,7 +295,9 @@ void GuildFolderWidget::draw() {
     fl_rectf(x() + r, y(), iconSize_ - r * 2, h());
     fl_rectf(x(), y() + r, iconSize_, h() - r * 2);
 
-    fl_push_clip(x(), y(), w(), h());
+    int leftX = getGuildBarLeftX(this);
+    int clipW = (x() + w()) - leftX;
+    fl_push_clip(leftX, y(), clipW, h());
 
     float progress = animationProgress_;
     if (progress > 0.01f) {

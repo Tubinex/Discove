@@ -56,6 +56,8 @@ class GuildBar : public Fl_Group {
 
   private:
     void subscribeToStore();
+    void bindGuildIcon(class GuildIcon *icon);
+    void applySelection();
 
     Store::ListenerId m_guildDataListenerId = 0;
     double m_scrollOffset = 0.0;
@@ -70,4 +72,6 @@ class GuildBar : public Fl_Group {
     std::function<void(const std::string &)> m_onGuildSelected;
     std::function<void()> m_onHomeClicked;
     std::vector<std::string> m_layoutSignature;
+    std::string m_selectedGuildId;
+    bool m_homeSelected = false;
 };
