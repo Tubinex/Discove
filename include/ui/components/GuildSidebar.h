@@ -3,6 +3,7 @@
 #include <FL/Fl_Group.H>
 #include <FL/Fl_Widget.H>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -115,18 +116,23 @@ class GuildSidebar : public Fl_Group {
 
     std::string m_guildId;
     std::string m_guildName;
+    std::string m_rulesChannelId;
     std::string m_bannerUrl;
     std::string m_bannerHash;
     Fl_RGB_Image *m_bannerImage = nullptr;
     std::unique_ptr<GifAnimation> m_bannerGif;
     AnimationManager::AnimationId m_bannerAnimationId = 0;
     bool m_isAnimatedBanner = false;
+    bool m_bannerHasPlayedOnce = false;
+    bool m_bannerHovered = false;
     double m_frameTimeAccumulated = 0.0;
     int m_premiumTier = 0;
     int m_subscriptionCount = 0;
     std::vector<CategoryItem> m_categories;
     std::vector<ChannelItem> m_uncategorizedChannels;
     std::string m_selectedChannelId;
+
+    static std::map<std::string, std::map<std::string, bool>> s_guildCategoryCollapsedState;
     int m_hoveredChannelIndex = -1;
     std::string m_hoveredCategoryId;
     int m_scrollOffset = 0;

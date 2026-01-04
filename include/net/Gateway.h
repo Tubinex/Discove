@@ -47,6 +47,7 @@ class Gateway {
         std::string name;
         std::string icon;
         std::string banner;
+        std::optional<std::string> rulesChannelId;
     };
 
     using AnyHandler = std::function<void(const Json &)>;

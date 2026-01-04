@@ -118,4 +118,18 @@ uint64_t computeBasePermissions(const std::string &guildId, const std::vector<st
 bool canViewChannel(const std::string &guildId, const std::vector<std::string> &userRoleIds,
                     const std::vector<PermissionOverwrite> &permissionOverwrites, uint64_t basePermissions);
 
+/**
+ * @brief Compute channel permissions for a user
+ * @param userId User ID
+ * @param guildId Guild ID
+ * @param userRoleIds User's role IDs in this guild
+ * @param permissionOverwrites Permission overwrites for the channel
+ * @param basePermissions User's base permissions from roles
+ * @return Computed permissions for the user in this channel
+ */
+uint64_t computeChannelPermissions(const std::string &userId, const std::string &guildId,
+                                   const std::vector<std::string> &userRoleIds,
+                                   const std::vector<PermissionOverwrite> &permissionOverwrites,
+                                   uint64_t basePermissions);
+
 } // namespace PermissionUtils

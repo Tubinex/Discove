@@ -41,7 +41,7 @@ constexpr Fl_Color PROFILE_BUTTON_ACTIVE_HOVER_STRONG = 0x452126FF;
 constexpr Fl_Color STATUS_DANGER = 0xF04747FF;
 
 constexpr Fl_Color STATUS_ONLINE = 0x23a55aFF;
-constexpr Fl_Color STATUS_IDLE = 0xf0b232FF;
+constexpr Fl_Color STATUS_IDLE = 0xca9654FF;
 constexpr Fl_Color STATUS_DND = 0xf23f43FF;
 constexpr Fl_Color STATUS_OFFLINE = 0x80848eFF;
 

@@ -103,4 +103,48 @@ bool canViewChannel(const std::string &guildId, const std::vector<std::string> &
     return canView;
 }
 
+uint64_t computeChannelPermissions(const std::string &userId, const std::string &guildId,
+                                   const std::vector<std::string> &userRoleIds,
+                                   const std::vector<PermissionOverwrite> &permissionOverwrites,
+                                   uint64_t basePermissions) {
+    if (basePermissions & Permissions::ADMINISTRATOR) {
+        return basePermissions;
+    }
+
+    uint64_t permissions = basePermissions;
+    for (const auto &overwrite : permissionOverwrites) {
+        if (overwrite.type == 0 && overwrite.id == guildId) {
+            permissions &= ~overwrite.deny;
+            permissions |= overwrite.allow;
+            break;
+        }
+    }
+
+    uint64_t allow = 0;
+    uint64_t deny = 0;
+    for (const auto &overwrite : permissionOverwrites) {
+        if (overwrite.type == 0 && overwrite.id != guildId) {
+            for (const auto &userRoleId : userRoleIds) {
+                if (userRoleId == overwrite.id) {
+                    allow |= overwrite.allow;
+                    deny |= overwrite.deny;
+                    break;
+                }
+            }
+        }
+    }
+    permissions &= ~deny;
+    permissions |= allow;
+
+    for (const auto &overwrite : permissionOverwrites) {
+        if (overwrite.type == 1 && overwrite.id == userId) {
+            permissions &= ~overwrite.deny;
+            permissions |= overwrite.allow;
+            break;
+        }
+    }
+
+    return permissions;
+}
+
 } // namespace PermissionUtils

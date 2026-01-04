@@ -72,7 +72,7 @@ void MainLayoutScreen::resize(int x, int y, int w, int h) {
     }
 
     if (m_mainContent) {
-        m_mainContent->resize(GUILD_BAR_WIDTH + SIDEBAR_WIDTH, 0, w - GUILD_BAR_WIDTH - SIDEBAR_WIDTH, contentHeight);
+        m_mainContent->resize(GUILD_BAR_WIDTH + SIDEBAR_WIDTH, 0, w - GUILD_BAR_WIDTH - SIDEBAR_WIDTH, h);
     }
 }
 
@@ -147,12 +147,12 @@ void MainLayoutScreen::createDMsView() {
     sidebar->setScrollOffset(m_dmSidebarScrollOffset);
     sidebar->setOnDMSelected([](const std::string &dmId) { Router::navigate("/channels/" + dmId); });
 
-    auto *placeholder = new ChannelPlaceholder(GUILD_BAR_WIDTH + SIDEBAR_WIDTH, 0,
-                                               w() - GUILD_BAR_WIDTH - SIDEBAR_WIDTH, contentHeight);
-    placeholder->setText("Select a DM to start messaging");
+    auto *channelView =
+        new TextChannelView(GUILD_BAR_WIDTH + SIDEBAR_WIDTH, 0, w() - GUILD_BAR_WIDTH - SIDEBAR_WIDTH, h());
+    channelView->setChannel("", "Select a DM to start messaging", "", false);
 
     m_sidebar = sidebar;
-    m_mainContent = placeholder;
+    m_mainContent = channelView;
 
     add(m_sidebar);
     add(m_mainContent);
@@ -172,12 +172,21 @@ void MainLayoutScreen::createDMChannelView(const std::string &dmId) {
     sidebar->setSelectedDM(dmId);
     sidebar->setOnDMSelected([](const std::string &newDmId) { Router::navigate("/channels/" + newDmId); });
 
-    auto *placeholder = new ChannelPlaceholder(GUILD_BAR_WIDTH + SIDEBAR_WIDTH, 0,
-                                               w() - GUILD_BAR_WIDTH - SIDEBAR_WIDTH, contentHeight);
-    placeholder->setText("DM: " + dmId);
+    auto state = Store::get().snapshot();
+    std::string channelName = "Direct Message";
+    for (const auto &dm : state.privateChannels) {
+        if (dm->id == dmId && dm->name.has_value()) {
+            channelName = *dm->name;
+            break;
+        }
+    }
+
+    auto *channelView =
+        new TextChannelView(GUILD_BAR_WIDTH + SIDEBAR_WIDTH, 0, w() - GUILD_BAR_WIDTH - SIDEBAR_WIDTH, h());
+    channelView->setChannel(dmId, channelName, "", true);
 
     m_sidebar = sidebar;
-    m_mainContent = placeholder;
+    m_mainContent = channelView;
 
     add(m_sidebar);
     add(m_mainContent);
@@ -204,12 +213,26 @@ void MainLayoutScreen::createGuildChannelView(const std::string &guildId, const 
     sidebar->setOnChannelSelected(
         [guildId](const std::string &newChannelId) { Router::navigate("/channels/" + guildId + "/" + newChannelId); });
 
-    auto *placeholder = new ChannelPlaceholder(GUILD_BAR_WIDTH + SIDEBAR_WIDTH, 0,
-                                               w() - GUILD_BAR_WIDTH - SIDEBAR_WIDTH, contentHeight);
-    placeholder->setText("Guild: " + guildId + ", Channel: " + channelId);
+    auto state = Store::get().snapshot();
+    std::string channelName = "channel";
+    bool isWelcomeVisible = false;
+    auto channelIt = state.guildChannels.find(guildId);
+    if (channelIt != state.guildChannels.end()) {
+        for (const auto &channel : channelIt->second) {
+            if (channel->id == channelId && channel->name.has_value()) {
+                channelName = *channel->name;
+                isWelcomeVisible = (channel->type == ChannelType::GUILD_TEXT);
+                break;
+            }
+        }
+    }
+
+    auto *channelView =
+        new TextChannelView(GUILD_BAR_WIDTH + SIDEBAR_WIDTH, 0, w() - GUILD_BAR_WIDTH - SIDEBAR_WIDTH, h());
+    channelView->setChannel(channelId, channelName, guildId, isWelcomeVisible);
 
     m_sidebar = sidebar;
-    m_mainContent = placeholder;
+    m_mainContent = channelView;
 
     add(m_sidebar);
     add(m_mainContent);

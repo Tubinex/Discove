@@ -55,6 +55,7 @@ class Guild {
     std::optional<std::string> banner;
     std::string ownerId;
     std::optional<std::string> description;
+    std::optional<std::string> rulesChannelId;
     std::vector<std::string> features;
     int verificationLevel = 0;
     int defaultMessageNotifications = 0;

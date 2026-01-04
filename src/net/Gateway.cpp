@@ -608,6 +608,11 @@ void Gateway::handleReady(const Json &data) {
                     guildInfo.banner = guild.banner;
                 }
 
+                if (props.contains("rules_channel_id") && props["rules_channel_id"].is_string()) {
+                    guild.rulesChannelId = props["rules_channel_id"].get<std::string>();
+                    guildInfo.rulesChannelId = guild.rulesChannelId.value_or("");
+                }
+
                 if (props.contains("premium_tier") && props["premium_tier"].is_number()) {
                     guildInfo.premiumTier = props["premium_tier"].get<int>();
                 }
@@ -629,6 +634,11 @@ void Gateway::handleReady(const Json &data) {
                 if (guildJson.contains("banner") && guildJson["banner"].is_string()) {
                     guild.banner = guildJson["banner"].get<std::string>();
                     guildInfo.banner = guild.banner;
+                }
+
+                if (guildJson.contains("rules_channel_id") && guildJson["rules_channel_id"].is_string()) {
+                    guild.rulesChannelId = guildJson["rules_channel_id"].get<std::string>();
+                    guildInfo.rulesChannelId = guild.rulesChannelId.value_or("");
                 }
 
                 if (guildJson.contains("premium_tier") && guildJson["premium_tier"].is_number()) {

@@ -23,6 +23,8 @@
 #include <fstream>
 #include <map>
 
+std::map<std::string, std::map<std::string, bool>> GuildSidebar::s_guildCategoryCollapsedState;
+
 GuildSidebar::GuildSidebar(int x, int y, int w, int h, const char *label) : Fl_Group(x, y, w, h, label) {
     box(FL_NO_BOX);
     clip_children(1);
@@ -91,11 +93,11 @@ void GuildSidebar::draw() {
 }
 
 int GuildSidebar::getHeaderHeight() const {
-    return m_bannerImage ? LayoutConstants::kGuildBannerHeight : LayoutConstants::kGuildSimpleHeaderHeight;
+    return !m_bannerHash.empty() ? LayoutConstants::kGuildBannerHeight : LayoutConstants::kGuildSimpleHeaderHeight;
 }
 
 void GuildSidebar::drawServerHeader() {
-    if (m_bannerImage) {
+    if (!m_bannerHash.empty()) {
         drawBanner();
     } else {
         drawSimpleHeader();
@@ -109,11 +111,13 @@ void GuildSidebar::drawSimpleHeader() {
     fl_color(ThemeColors::BG_SECONDARY);
     fl_rectf(x(), y(), w(), LayoutConstants::kGuildSimpleHeaderHeight);
 
+    const int fontSize = LayoutConstants::kGuildHeaderFontSize;
     fl_color(ThemeColors::TEXT_NORMAL);
-    fl_font(FontLoader::Fonts::INTER_SEMIBOLD, LayoutConstants::kGuildHeaderFontSize);
+    fl_font(FontLoader::Fonts::INTER_SEMIBOLD, fontSize);
 
-    int textY = y() + (LayoutConstants::kGuildSimpleHeaderHeight / 2) + (LayoutConstants::kGuildHeaderFontSize / 2) - 2;
     const int leftMargin = 16;
+    const int topMargin = 16;
+    int textY = y() + topMargin + fontSize;
     fl_draw(m_guildName.c_str(), x() + leftMargin, textY);
 
     fl_font(FontLoader::Fonts::INTER_REGULAR, LayoutConstants::kDropdownIconFontSize);
@@ -219,9 +223,11 @@ void GuildSidebar::drawBanner() {
     }
 
     const int leftMargin = 16;
+    const int topMargin = 16;
+    const int fontSize = LayoutConstants::kGuildHeaderFontSize;
     fl_color(FL_WHITE);
-    fl_font(FontLoader::Fonts::INTER_SEMIBOLD, LayoutConstants::kGuildBannerFontSize);
-    int textY = bannerY + 16 + LayoutConstants::kGuildBannerFontSize;
+    fl_font(FontLoader::Fonts::INTER_SEMIBOLD, fontSize);
+    int textY = bannerY + topMargin + fontSize;
     fl_draw(m_guildName.c_str(), x() + leftMargin, textY);
 
     fl_font(FontLoader::Fonts::INTER_REGULAR, LayoutConstants::kDropdownIconFontSize);
@@ -269,25 +275,30 @@ void GuildSidebar::drawChannel(const ChannelItem &channel, int yPos, bool select
     Fl_Color iconColor = (selected || hovered) ? ThemeColors::TEXT_NORMAL : ThemeColors::CHANNEL_ICON;
 
     const char *iconName = "channel_text";
-    switch (channel.type) {
-    case 0:
-        iconName = "channel_text";
-        break;
-    case 2:
-        iconName = "channel_voice";
-        break;
-    case 5:
-        iconName = "channel_announcement";
-        break;
-    case 13:
-        iconName = "channel_voice";
-        break;
-    case 15:
-        iconName = "channel_forum";
-        break;
-    default:
-        iconName = "channel_text";
-        break;
+
+    if (!m_rulesChannelId.empty() && channel.id == m_rulesChannelId) {
+        iconName = "channel_rules";
+    } else {
+        switch (channel.type) {
+        case 0:
+            iconName = "channel_text";
+            break;
+        case 2:
+            iconName = "channel_voice";
+            break;
+        case 5:
+            iconName = "channel_announcement";
+            break;
+        case 13:
+            iconName = "channel_voice";
+            break;
+        case 15:
+            iconName = "channel_forum";
+            break;
+        default:
+            iconName = "channel_text";
+            break;
+        }
     }
 
     auto *icon = IconManager::load_recolored_icon(iconName, LayoutConstants::kChannelIconSize, iconColor);
@@ -315,6 +326,8 @@ int GuildSidebar::handle(int event) {
         int categoryIndex = getCategoryAt(Fl::event_x(), Fl::event_y());
         if (categoryIndex >= 0 && categoryIndex < static_cast<int>(m_categories.size())) {
             m_categories[categoryIndex].collapsed = !m_categories[categoryIndex].collapsed;
+            s_guildCategoryCollapsedState[m_guildId][m_categories[categoryIndex].id] =
+                m_categories[categoryIndex].collapsed;
             redraw();
             return 1;
         }
@@ -355,7 +368,27 @@ int GuildSidebar::handle(int event) {
                 m_hoveredCategoryId.clear();
                 redraw();
             }
+            if (m_bannerHovered) {
+                m_bannerHovered = false;
+                if (m_bannerHasPlayedOnce) {
+                    stopBannerAnimation();
+                }
+            }
             return 1;
+        }
+
+        int mouseY = Fl::event_y();
+        int bannerHeight = getHeaderHeight();
+        bool overBanner = !m_bannerHash.empty() && mouseY >= y() && mouseY < y() + bannerHeight;
+
+        if (overBanner != m_bannerHovered) {
+            m_bannerHovered = overBanner;
+            if (m_bannerHovered && m_bannerHasPlayedOnce && m_isAnimatedBanner && m_bannerGif &&
+                m_bannerGif->isAnimated()) {
+                startBannerAnimation();
+            } else if (!m_bannerHovered && m_bannerHasPlayedOnce) {
+                stopBannerAnimation();
+            }
         }
 
         int categoryIndex = getCategoryAt(Fl::event_x(), Fl::event_y());
@@ -427,6 +460,9 @@ void GuildSidebar::loadBannerImage() {
     if (m_bannerUrl.empty())
         return;
 
+    m_bannerHasPlayedOnce = false;
+    m_bannerHovered = false;
+
     Images::loadImageAsync(m_bannerUrl, [this](Fl_RGB_Image *image) {
         if (image) {
             m_bannerImage = image;
@@ -482,8 +518,19 @@ bool GuildSidebar::updateBannerAnimation() {
     double requiredDelay = m_bannerGif->currentDelay() / 1000.0;
 
     if (m_frameTimeAccumulated >= requiredDelay) {
+        size_t currentFrame = m_bannerGif->getCurrentFrameIndex();
         m_bannerGif->nextFrame();
         m_frameTimeAccumulated = 0.0;
+
+        if (currentFrame == m_bannerGif->frameCount() - 1 && m_bannerGif->getCurrentFrameIndex() == 0) {
+            m_bannerHasPlayedOnce = true;
+            if (!m_bannerHovered) {
+                stopBannerAnimation();
+                redraw();
+                return false;
+            }
+        }
+
         redraw();
     }
 
@@ -575,11 +622,21 @@ void GuildSidebar::setGuildId(const std::string &guildId) {
             m_guildName = guild.name;
             m_premiumTier = guild.premiumTier;
             m_subscriptionCount = guild.premiumSubscriptionCount;
+            m_rulesChannelId = guild.rulesChannelId;
             if (!guild.banner.empty()) {
                 m_bannerHash = guild.banner;
                 m_isAnimatedBanner = !guild.banner.empty() && guild.banner.rfind("a_", 0) == 0;
-                std::string bannerUrl = CDNUtils::getGuildBannerUrl(guild.id, guild.banner, 1024);
+                std::string bannerUrl = CDNUtils::getGuildBannerUrl(guild.id, guild.banner, 512);
                 setBannerUrl(bannerUrl);
+            } else {
+                m_bannerHash.clear();
+                m_bannerUrl.clear();
+                m_bannerImage = nullptr;
+                m_isAnimatedBanner = false;
+                m_bannerHasPlayedOnce = false;
+                m_bannerHovered = false;
+                stopBannerAnimation();
+                m_bannerGif.reset();
             }
             break;
         }
@@ -634,6 +691,13 @@ void GuildSidebar::loadChannelsFromStore() {
             cat.id = channel->id;
             cat.name = *channel->name;
             cat.collapsed = false;
+            auto guildStateIt = s_guildCategoryCollapsedState.find(m_guildId);
+            if (guildStateIt != s_guildCategoryCollapsedState.end()) {
+                auto categoryStateIt = guildStateIt->second.find(channel->id);
+                if (categoryStateIt != guildStateIt->second.end()) {
+                    cat.collapsed = categoryStateIt->second;
+                }
+            }
             cat.position = channel->position;
             categoriesMap[channel->id] = cat;
         } else {

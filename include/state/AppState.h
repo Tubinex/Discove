@@ -11,6 +11,7 @@
 #include "models/GuildFolder.h"
 #include "models/GuildInfo.h"
 #include "models/GuildMember.h"
+#include "models/Message.h"
 #include "models/Role.h"
 
 struct CustomStatus {
@@ -76,4 +77,5 @@ struct AppState {
     std::unordered_map<std::string, std::vector<std::shared_ptr<GuildChannel>>> guildChannels;
     std::unordered_map<std::string, GuildMember> guildMembers;
     std::unordered_map<std::string, std::vector<Role>> guildRoles;
+    std::unordered_map<std::string, std::vector<Message>> channelMessages;
 };

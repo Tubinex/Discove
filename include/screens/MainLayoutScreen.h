@@ -2,11 +2,11 @@
 
 #include "router/Screen.h"
 #include "state/Store.h"
-#include "ui/components/ChannelPlaceholder.h"
 #include "ui/components/DMSidebar.h"
 #include "ui/components/GuildBar.h"
 #include "ui/components/GuildSidebar.h"
 #include "ui/components/ProfileBubble.h"
+#include "ui/components/TextChannelView.h"
 
 #include <unordered_map>
 

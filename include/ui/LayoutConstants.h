@@ -21,7 +21,7 @@ constexpr int kChannelIconPadding = 8;
 constexpr int kChannelTextPadding = 36;
 constexpr int kIndent = 8;
 
-constexpr int kGuildBannerHeight = 126;
+constexpr int kGuildBannerHeight = 142;
 constexpr int kGuildSimpleHeaderHeight = 48;
 
 constexpr int kGuildHeaderFontSize = 15;

@@ -48,6 +48,10 @@ Guild Guild::fromJson(const nlohmann::json &j) {
         guild.description = j["description"].get<std::string>();
     }
 
+    if (j.contains("rules_channel_id") && !j["rules_channel_id"].is_null()) {
+        guild.rulesChannelId = j["rules_channel_id"].get<std::string>();
+    }
+
     if (j.contains("features") && j["features"].is_array()) {
         for (const auto &feature : j["features"]) {
             guild.features.push_back(feature.get<std::string>());
