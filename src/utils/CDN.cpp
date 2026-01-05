@@ -97,7 +97,7 @@ std::string getMemberAvatarUrl(const std::string &guildId, const std::string &us
 
 std::string getEmojiUrl(const std::string &emojiId, bool animated, int size) {
     int normalizedSize = normalizeSize(size);
-    std::string ext = animated ? ".gif" : ".webp";
+    std::string ext = animated ? ".gif" : ".png";
     std::ostringstream url;
     url << CDN_BASE << "/emojis/" << emojiId << ext << "?size=" << normalizedSize;
     return url.str();

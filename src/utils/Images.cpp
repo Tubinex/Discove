@@ -4,6 +4,7 @@
 
 #include <FL/Fl.H>
 #include <FL/Fl_GIF_Image.H>
+#include <FL/Fl_JPEG_Image.H>
 #include <FL/Fl_PNG_Image.H>
 #include <FL/Fl_RGB_Image.H>
 #include <FL/Fl_Shared_Image.H>
@@ -360,6 +361,32 @@ Fl_RGB_Image *imageFromData(const std::string &data, const std::string &url) {
         } else {
             Logger::warn("Failed to create temp file for GIF decoding: " + tempFile);
         }
+    } else if (format == "jpeg") {
+        std::string tempFile = generateTempFilename("jpg");
+
+        std::ofstream out(tempFile, std::ios::binary);
+        if (out.is_open()) {
+            out.write(data.data(), data.size());
+            out.close();
+
+            std::unique_ptr<Fl_JPEG_Image> jpg_image = std::make_unique<Fl_JPEG_Image>(tempFile.c_str());
+            if (jpg_image) {
+                if (jpg_image->w() > 0 && jpg_image->h() > 0) {
+                    Fl_RGB_Image *result = (Fl_RGB_Image *)jpg_image->copy();
+                    std::remove(tempFile.c_str());
+                    return result;
+                } else {
+                    Logger::warn("JPEG image has invalid dimensions (" + std::to_string(jpg_image->w()) + "x" +
+                                 std::to_string(jpg_image->h()) + ") for URL: " + url);
+                }
+            } else {
+                Logger::warn("Failed to create JPEG image object for URL: " + url);
+            }
+
+            std::remove(tempFile.c_str());
+        } else {
+            Logger::warn("Failed to create temp file for JPEG decoding: " + tempFile);
+        }
     } else {
         Logger::warn("Unsupported image format: " + format + " for URL: " + url);
     }
@@ -643,6 +670,11 @@ Fl_RGB_Image *getCachedImage(const std::string &url) {
         return it->second.get();
     }
     return nullptr;
+}
+
+void evictFromMemory(const std::string &url) {
+    std::scoped_lock lock(cache_mutex);
+    image_cache.erase(url);
 }
 
 std::string getCacheFilePath(const std::string &url, const std::string &extension) {

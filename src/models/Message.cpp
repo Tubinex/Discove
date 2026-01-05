@@ -1,5 +1,6 @@
 #include "models/Message.h"
 
+#include "utils/CDN.h"
 #include "utils/Time.h"
 
 Message Message::fromJson(const nlohmann::json &j) {
@@ -13,6 +14,28 @@ Message Message::fromJson(const nlohmann::json &j) {
         const auto &author = j["author"];
         if (author.contains("id")) {
             message.authorId = author["id"].get<std::string>();
+        }
+        if (author.contains("username") && !author["username"].is_null()) {
+            message.authorUsername = author["username"].get<std::string>();
+        }
+        if (author.contains("discriminator") && !author["discriminator"].is_null()) {
+            message.authorDiscriminator = author["discriminator"].get<std::string>();
+        }
+        if (author.contains("global_name") && !author["global_name"].is_null()) {
+            message.authorGlobalName = author["global_name"].get<std::string>();
+        }
+        if (author.contains("avatar") && !author["avatar"].is_null()) {
+            message.authorAvatarHash = author["avatar"].get<std::string>();
+        }
+    }
+
+    if (j.contains("member") && j["member"].is_object()) {
+        const auto &member = j["member"];
+        if (member.contains("nick") && !member["nick"].is_null()) {
+            message.authorNickname = member["nick"].get<std::string>();
+        }
+        if (member.contains("avatar") && !member["avatar"].is_null()) {
+            message.authorMemberAvatarHash = member["avatar"].get<std::string>();
         }
     }
 
@@ -56,6 +79,13 @@ Message Message::fromJson(const nlohmann::json &j) {
         for (const auto &mention : j["mentions"]) {
             if (mention.contains("id")) {
                 message.mentionIds.push_back(mention["id"].get<std::string>());
+            }
+            if (mention.contains("global_name") && !mention["global_name"].is_null()) {
+                message.mentionDisplayNames.push_back(mention["global_name"].get<std::string>());
+            } else if (mention.contains("username") && !mention["username"].is_null()) {
+                message.mentionDisplayNames.push_back(mention["username"].get<std::string>());
+            } else if (mention.contains("id")) {
+                message.mentionDisplayNames.push_back(mention["id"].get<std::string>());
             }
         }
     }
@@ -122,3 +152,35 @@ std::string Message::getJumpUrl() const {
 }
 
 bool Message::wasEdited() const { return editedTimestamp.has_value(); }
+
+std::string Message::getAuthorDisplayName() const {
+    if (!authorNickname.empty()) {
+        return authorNickname;
+    }
+    if (!authorGlobalName.empty()) {
+        return authorGlobalName;
+    }
+    if (!authorUsername.empty()) {
+        return authorUsername;
+    }
+    if (!authorId.empty()) {
+        return authorId;
+    }
+    return "User";
+}
+
+std::string Message::getAuthorAvatarUrl(int size) const {
+    if (authorId.empty()) {
+        return "";
+    }
+    if (!authorMemberAvatarHash.empty() && guildId.has_value()) {
+        return CDNUtils::getMemberAvatarUrl(*guildId, authorId, authorMemberAvatarHash, size);
+    }
+    if (!authorAvatarHash.empty()) {
+        return CDNUtils::getUserAvatarUrl(authorId, authorAvatarHash, size);
+    }
+    if (!authorDiscriminator.empty() && authorDiscriminator != "0") {
+        return CDNUtils::getDefaultAvatarUrlLegacy(authorDiscriminator);
+    }
+    return CDNUtils::getDefaultAvatarUrl(authorId);
+}

@@ -1,10 +1,13 @@
 #include "ui/components/TextChannelView.h"
 
+#include "data/Database.h"
+#include "net/APIClient.h"
 #include "state/Store.h"
 #include "ui/IconManager.h"
 #include "ui/LayoutConstants.h"
 #include "ui/RoundedWidget.h"
 #include "ui/Theme.h"
+#include "ui/components/MessageWidget.h"
 #include "utils/Fonts.h"
 #include "utils/Logger.h"
 #include "utils/Permissions.h"
@@ -18,6 +21,8 @@
 #include <cstring>
 #include <iomanip>
 #include <sstream>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace {
 constexpr int kInputBubbleMargin = 8;
@@ -33,9 +38,82 @@ constexpr int kInputIconButtonRadius = 6;
 constexpr int kInputIconSpacing = 6;
 constexpr int kInputIconRightPadding = 12;
 constexpr int kEmojiAtlasCellSize = 48;
+constexpr int kMessagesVerticalPadding = 16;
+constexpr int kDateSeparatorPadding = 28;
+constexpr int kDateSeparatorHeight = kDateSeparatorPadding * 2;
+constexpr int kSystemMessageSpacing = 8;
+constexpr int kMessageScrollStep = 32;
+constexpr int kMessageRenderPadding = 200;
 
-std::unique_ptr<Fl_RGB_Image> copyEmojiCell(Fl_RGB_Image *atlas, int cellX, int cellY, int cellSize,
-                                            int targetSize) {
+std::string trimSpaces(const std::string &text) {
+    size_t start = text.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) {
+        return "";
+    }
+    size_t end = text.find_last_not_of(" \t\r\n");
+    return text.substr(start, end - start + 1);
+}
+
+std::string collapseWhitespace(const std::string &text) {
+    std::string result;
+    result.reserve(text.size());
+    bool inSpace = false;
+    for (char ch : text) {
+        if (ch == '\n' || ch == '\r' || ch == '\t' || ch == ' ') {
+            if (!inSpace) {
+                result.push_back(' ');
+                inSpace = true;
+            }
+        } else {
+            result.push_back(ch);
+            inSpace = false;
+        }
+    }
+    return trimSpaces(result);
+}
+
+std::string buildAttachmentSnippet(const Message &msg) {
+    bool hasImage = false;
+    bool hasVideo = false;
+    for (const auto &attachment : msg.attachments) {
+        if (attachment.isImage()) {
+            hasImage = true;
+        } else if (attachment.isVideo()) {
+            hasVideo = true;
+        }
+    }
+
+    if (hasImage) {
+        return "Image";
+    }
+    if (hasVideo) {
+        return "Video";
+    }
+    return "Attachment";
+}
+
+MessageWidget::ReplyPreview buildReplyPreview(const Message *referenced) {
+    MessageWidget::ReplyPreview preview;
+    if (!referenced) {
+        preview.author = "Unknown";
+        preview.content = "Original message unavailable";
+        preview.unavailable = true;
+        return preview;
+    }
+
+    preview.author = referenced->getAuthorDisplayName();
+
+    std::string snippet = collapseWhitespace(referenced->content);
+    if (snippet.empty()) {
+        if (!referenced->attachments.empty()) {
+            snippet = buildAttachmentSnippet(*referenced);
+        }
+    }
+    preview.content = snippet;
+    return preview;
+}
+
+std::unique_ptr<Fl_RGB_Image> copyEmojiCell(Fl_RGB_Image *atlas, int cellX, int cellY, int cellSize, int targetSize) {
     if (!atlas || cellSize <= 0 || targetSize <= 0) {
         return nullptr;
     }
@@ -201,11 +279,37 @@ TextChannelView::TextChannelView(int x, int y, int w, int h, const char *label) 
     box(FL_NO_BOX);
     clip_children(1);
     end();
+
+    m_storeListenerId = Store::get().subscribe([this](const AppState &state) {
+        if (m_isDestroying || m_channelId.empty()) {
+            return;
+        }
+
+        auto it = state.channelMessages.find(m_channelId);
+        if (it != state.channelMessages.end()) {
+            m_messages = it->second;
+            redraw();
+        } else {
+            m_messages.clear();
+            redraw();
+        }
+    });
 }
 
-TextChannelView::~TextChannelView() {}
+TextChannelView::~TextChannelView() {
+    m_isDestroying = true;
+
+    if (m_storeListenerId) {
+        Store::get().unsubscribe(m_storeListenerId);
+        m_storeListenerId = 0;
+    }
+}
 
 void TextChannelView::draw() {
+    if (m_isDestroying) {
+        return;
+    }
+
     fl_push_clip(x(), y(), w(), h());
 
     fl_color(ThemeColors::BG_PRIMARY);
@@ -219,6 +323,11 @@ void TextChannelView::draw() {
     fl_push_clip(x(), contentY, w(), contentH);
 
     if (m_welcomeVisible && m_messages.empty()) {
+        m_messagesScrollOffset = 0;
+        m_messagesContentHeight = 0;
+        m_messagesViewHeight = 0;
+        m_avatarHitboxes.clear();
+        updateAvatarHover(0, 0, true);
         drawWelcomeSection();
     } else {
         drawMessages();
@@ -236,14 +345,46 @@ int TextChannelView::handle(int event) {
     int handled = Fl_Group::handle(event);
 
     switch (event) {
+    case FL_MOUSEWHEEL: {
+        int mx = Fl::event_x();
+        int my = Fl::event_y();
+        int inputAreaHeight = m_canSendMessages ? MESSAGE_INPUT_HEIGHT : 0;
+        int contentY = y() + HEADER_HEIGHT;
+        int contentH = h() - HEADER_HEIGHT - inputAreaHeight;
+
+        if (contentH <= 0 || mx < x() || mx >= x() + w() || my < contentY || my >= contentY + contentH) {
+            break;
+        }
+
+        int maxScroll = std::max(0, m_messagesContentHeight - m_messagesViewHeight);
+        if (maxScroll <= 0) {
+            return 1;
+        }
+
+        int dy = Fl::event_dy();
+        if (dy == 0) {
+            return 1;
+        }
+
+        int newOffset = std::clamp(m_messagesScrollOffset - dy * kMessageScrollStep, 0, maxScroll);
+        if (newOffset != m_messagesScrollOffset) {
+            m_messagesScrollOffset = newOffset;
+            m_avatarHitboxes.clear();
+            updateAvatarHover(0, 0, true);
+            redraw();
+        }
+        return 1;
+    }
     case FL_ENTER:
     case FL_MOVE:
     case FL_LEAVE: {
         int hoveredIndex = -1;
         bool plusHovered = false;
+        int mx = 0;
+        int my = 0;
         if (event != FL_LEAVE) {
-            int mx = Fl::event_x();
-            int my = Fl::event_y();
+            mx = Fl::event_x();
+            my = Fl::event_y();
             int plusX = 0;
             int plusY = 0;
             int plusSize = 0;
@@ -282,6 +423,10 @@ int TextChannelView::handle(int event) {
             hoverChanged = true;
         }
 
+        if (updateAvatarHover(mx, my, event == FL_LEAVE)) {
+            hoverChanged = true;
+        }
+
         if (hoverChanged) {
             redraw();
             handled = 1;
@@ -306,7 +451,14 @@ void TextChannelView::setChannel(const std::string &channelId, const std::string
     m_channelName = channelName;
     m_guildId = guildId;
     m_welcomeVisible = isWelcomeVisible;
-    loadMessagesFromStore();
+    m_messagesScrollOffset = 0;
+    m_avatarHitboxes.clear();
+    m_hoveredAvatarMessageId.clear();
+    if (!m_hoveredAvatarKey.empty()) {
+        m_hoveredAvatarKey.clear();
+        MessageWidget::setHoveredAvatarKey("");
+    }
+    loadMessages();
     updatePermissions();
     redraw();
 }
@@ -370,15 +522,62 @@ void TextChannelView::drawWelcomeSection() {
 }
 
 void TextChannelView::drawMessages() {
+    int inputAreaHeight = m_canSendMessages ? MESSAGE_INPUT_HEIGHT : 0;
     int contentY = y() + HEADER_HEIGHT;
-    int yPos = contentY + 16;
+    int contentH = h() - HEADER_HEIGHT - inputAreaHeight;
+    if (contentH <= 0) {
+        return;
+    }
+
+    int viewTop = contentY + kMessagesVerticalPadding;
+    int viewBottom = contentY + contentH - kMessagesVerticalPadding;
+    if (viewBottom < viewTop) {
+        viewBottom = viewTop;
+    }
+    m_messagesViewHeight = std::max(0, viewBottom - viewTop);
+    m_avatarHitboxes.clear();
+    std::vector<const Message *> ordered;
+    ordered.reserve(m_messages.size());
+    std::unordered_map<std::string, const Message *> messageById;
+    messageById.reserve(m_messages.size());
+    for (const auto &msg : m_messages) {
+        ordered.push_back(&msg);
+        messageById[msg.id] = &msg;
+    }
+
+    std::stable_sort(ordered.begin(), ordered.end(),
+                     [](const Message *a, const Message *b) { return a->timestamp < b->timestamp; });
+
+    struct RenderEntry {
+        enum class Type { Separator, Message };
+        Type type;
+        std::string date;
+        const Message *msg = nullptr;
+        MessageWidget::Layout layout;
+        bool grouped = false;
+    };
+
+    std::vector<RenderEntry> entries;
+    entries.reserve(ordered.size() * 2);
+
+    struct MessageInfo {
+        const Message *msg = nullptr;
+        std::string date;
+        bool grouped = false;
+        bool needsSeparator = false;
+    };
+
+    std::vector<MessageInfo> messageInfos;
+    messageInfos.reserve(ordered.size());
 
     std::string previousAuthorId;
     std::chrono::system_clock::time_point previousTimestamp;
+    bool hasPrevious = false;
+    bool previousWasSystem = false;
     std::string previousDate;
 
-    for (const auto &msg : m_messages) {
-        auto msgTime = std::chrono::system_clock::to_time_t(msg.timestamp);
+    for (const auto *msg : ordered) {
+        auto msgTime = std::chrono::system_clock::to_time_t(msg->timestamp);
         std::tm tmStruct;
         localtime_s(&tmStruct, &msgTime);
 
@@ -386,19 +585,181 @@ void TextChannelView::drawMessages() {
         dateStream << std::put_time(&tmStruct, "%B %d, %Y");
         std::string currentDate = dateStream.str();
 
-        if (currentDate != previousDate && !previousDate.empty()) {
-            drawDateSeparator(currentDate, yPos);
-        }
-        previousDate = currentDate;
-        drawMessage(msg, yPos, previousAuthorId, previousTimestamp);
+        bool needsSeparator = (currentDate != previousDate);
 
-        previousAuthorId = msg.authorId;
-        previousTimestamp = msg.timestamp;
+        bool isSystem = msg->isSystemMessage();
+        bool isGrouped = false;
+        if (!isSystem && hasPrevious && !previousWasSystem && !needsSeparator && !msg->isReply() &&
+            msg->authorId == previousAuthorId) {
+            auto timeDiff = std::chrono::duration_cast<std::chrono::minutes>(msg->timestamp - previousTimestamp);
+            if (timeDiff.count() < 5) {
+                isGrouped = true;
+            }
+        }
+
+        messageInfos.push_back({msg, currentDate, isGrouped, needsSeparator});
+
+        if (!isSystem) {
+            previousAuthorId = msg->authorId;
+            previousTimestamp = msg->timestamp;
+            hasPrevious = true;
+        } else {
+            previousAuthorId.clear();
+            hasPrevious = true;
+        }
+        previousWasSystem = isSystem;
+        previousDate = currentDate;
+    }
+
+    int totalHeight = 0;
+    bool previousEntryWasSeparator = false;
+    previousWasSystem = false;
+
+    for (size_t i = 0; i < messageInfos.size(); ++i) {
+        const auto &info = messageInfos[i];
+        if (info.needsSeparator) {
+            entries.push_back({RenderEntry::Type::Separator, info.date});
+            totalHeight += kDateSeparatorHeight;
+            previousEntryWasSeparator = true;
+        }
+
+        if (!info.msg) {
+            continue;
+        }
+
+        bool isSystem = info.msg->isSystemMessage();
+        bool compactBottom = (i + 1 < messageInfos.size()) ? messageInfos[i + 1].grouped : false;
+
+        int spacing = 0;
+        if (!previousEntryWasSeparator) {
+            if (info.grouped) {
+                spacing = 0;
+            } else if (isSystem && previousWasSystem) {
+                spacing = kSystemMessageSpacing;
+            } else {
+                spacing = MESSAGE_GROUP_SPACING;
+            }
+        }
+        totalHeight += spacing;
+
+        MessageWidget::ReplyPreview replyPreview;
+        MessageWidget::ReplyPreview *replyPtr = nullptr;
+        if (info.msg->isReply() && info.msg->referencedMessageId.has_value()) {
+            auto refIt = messageById.find(*info.msg->referencedMessageId);
+            const Message *referenced = (refIt != messageById.end()) ? refIt->second : nullptr;
+            replyPreview = buildReplyPreview(referenced);
+            replyPtr = &replyPreview;
+        }
+
+        MessageWidget::Layout layout = MessageWidget::buildLayout(*info.msg, w(), info.grouped, compactBottom, replyPtr);
+        totalHeight += layout.height;
+        entries.push_back({RenderEntry::Type::Message, "", info.msg, layout, info.grouped});
+
+        previousWasSystem = isSystem;
+        previousEntryWasSeparator = false;
+    }
+
+    m_messagesContentHeight = totalHeight;
+    int maxScroll = std::max(0, totalHeight - m_messagesViewHeight);
+    if (m_messagesScrollOffset > maxScroll) {
+        m_messagesScrollOffset = maxScroll;
+    } else if (m_messagesScrollOffset < 0) {
+        m_messagesScrollOffset = 0;
+    }
+
+    int yPos = viewBottom - totalHeight + m_messagesScrollOffset;
+    int renderTop = viewTop - kMessageRenderPadding;
+    int renderBottom = viewBottom + kMessageRenderPadding;
+
+    std::unordered_set<std::string> keepAvatarKeys;
+    std::unordered_set<std::string> keepAnimatedAvatarKeys;
+    std::unordered_set<std::string> keepAttachmentKeys;
+
+    bool drawingAfterSeparator = false;
+    previousWasSystem = false;
+    for (const auto &entry : entries) {
+        if (entry.type == RenderEntry::Type::Separator) {
+            int separatorTop = yPos;
+            int separatorBottom = yPos + kDateSeparatorHeight;
+            if (separatorBottom >= renderTop && separatorTop <= renderBottom) {
+                drawDateSeparator(entry.date, yPos);
+            } else {
+                yPos += kDateSeparatorHeight;
+            }
+            drawingAfterSeparator = true;
+            continue;
+        }
+
+        int spacing = 0;
+        if (!drawingAfterSeparator) {
+            if (entry.grouped) {
+                spacing = 0;
+            } else if (entry.msg && entry.msg->isSystemMessage() && previousWasSystem) {
+                spacing = kSystemMessageSpacing;
+            } else {
+                spacing = MESSAGE_GROUP_SPACING;
+            }
+        }
+        int entryTop = yPos + spacing;
+        int entryBottom = entryTop + entry.layout.height;
+        bool visible = entryBottom >= renderTop && entryTop <= renderBottom;
+
+        yPos += spacing;
+        if (visible && entry.msg) {
+            bool avatarHovered = false;
+            if (!entry.grouped && !entry.msg->isSystemMessage()) {
+                AvatarHitbox hitbox;
+                hitbox.x = x() + entry.layout.avatarX;
+                hitbox.y = yPos + entry.layout.avatarY;
+                hitbox.size = entry.layout.avatarSize;
+                hitbox.messageId = entry.msg->id;
+                hitbox.hoverKey = MessageWidget::getAnimatedAvatarKey(*entry.msg, entry.layout.avatarSize);
+                m_avatarHitboxes.push_back(std::move(hitbox));
+                avatarHovered = (entry.msg->id == m_hoveredAvatarMessageId);
+
+                std::string avatarKey = MessageWidget::getAvatarCacheKey(*entry.msg, entry.layout.avatarSize);
+                if (!avatarKey.empty()) {
+                    keepAvatarKeys.insert(avatarKey);
+                }
+                if (!hitbox.hoverKey.empty()) {
+                    keepAnimatedAvatarKeys.insert(hitbox.hoverKey);
+                }
+            }
+
+            for (const auto &attachmentLayout : entry.layout.attachments) {
+                if (!attachmentLayout.cacheKey.empty()) {
+                    keepAttachmentKeys.insert(attachmentLayout.cacheKey);
+                }
+            }
+
+            MessageWidget::draw(*entry.msg, entry.layout, x(), yPos, avatarHovered);
+        }
+        yPos += entry.layout.height;
+        previousWasSystem = entry.msg && entry.msg->isSystemMessage();
+        drawingAfterSeparator = false;
+    }
+
+    MessageWidget::pruneAvatarCache(keepAvatarKeys);
+    MessageWidget::pruneAnimatedAvatarCache(keepAnimatedAvatarKeys);
+    MessageWidget::pruneAttachmentCache(keepAttachmentKeys);
+
+    if (!m_hoveredAvatarMessageId.empty()) {
+        bool stillVisible = std::any_of(m_avatarHitboxes.begin(), m_avatarHitboxes.end(),
+                                        [this](const AvatarHitbox &hitbox) {
+                                            return hitbox.messageId == m_hoveredAvatarMessageId;
+                                        });
+        if (!stillVisible) {
+            m_hoveredAvatarMessageId.clear();
+            if (!m_hoveredAvatarKey.empty()) {
+                m_hoveredAvatarKey.clear();
+                MessageWidget::setHoveredAvatarKey("");
+            }
+        }
     }
 }
 
 void TextChannelView::drawDateSeparator(const std::string &date, int &yPos) {
-    yPos += 12;
+    yPos += kDateSeparatorPadding;
 
     const int lineMargin = 16;
     const int textPadding = 8;
@@ -418,72 +779,7 @@ void TextChannelView::drawDateSeparator(const std::string &date, int &yPos) {
     fl_color(ThemeColors::BG_MODIFIER_ACCENT);
     fl_line(textX + textWidth + textPadding, yPos, x() + w() - lineMargin, yPos);
 
-    yPos += 24;
-}
-
-void TextChannelView::drawMessage(const Message &msg, int &yPos, const std::string &previousAuthorId,
-                                  const std::chrono::system_clock::time_point &previousTimestamp) {
-    const int leftMargin = 16;
-    const int avatarSize = 40;
-    const int avatarMargin = 16;
-
-    bool isGrouped = false;
-    if (msg.authorId == previousAuthorId) {
-        auto timeDiff = std::chrono::duration_cast<std::chrono::minutes>(msg.timestamp - previousTimestamp);
-        if (timeDiff.count() < 5) {
-            isGrouped = true;
-        }
-    }
-
-    if (isGrouped) {
-        yPos += MESSAGE_SPACING;
-
-        fl_color(ThemeColors::TEXT_NORMAL);
-        fl_font(FontLoader::Fonts::INTER_REGULAR, 16);
-        int textX = x() + leftMargin + avatarSize + avatarMargin;
-        int textY = yPos + 16;
-        fl_draw(msg.content.c_str(), textX, textY);
-
-        yPos += 20;
-    } else {
-        yPos += MESSAGE_GROUP_SPACING;
-
-        fl_color(ThemeColors::BG_TERTIARY);
-        fl_pie(x() + leftMargin, yPos, avatarSize, avatarSize, 0, 360);
-
-        // TODO: Load actual avatar from user profile
-        fl_color(ThemeColors::TEXT_NORMAL);
-        fl_font(FontLoader::Fonts::INTER_SEMIBOLD, 20);
-        fl_draw("U", x() + leftMargin + avatarSize / 2 - 6, yPos + avatarSize / 2 + 7);
-
-        std::string username = "User"; // TODO: Get from user profile
-        fl_color(ThemeColors::TEXT_NORMAL);
-        fl_font(FontLoader::Fonts::INTER_SEMIBOLD, 16);
-        int usernameX = x() + leftMargin + avatarSize + avatarMargin;
-        int usernameY = yPos + 16;
-        fl_draw(username.c_str(), usernameX, usernameY);
-
-        auto msgTime = std::chrono::system_clock::to_time_t(msg.timestamp);
-        std::tm tmStruct;
-        localtime_s(&tmStruct, &msgTime);
-
-        std::ostringstream timeStream;
-        timeStream << std::put_time(&tmStruct, "%I:%M %p");
-        std::string timeStr = timeStream.str();
-
-        fl_color(ThemeColors::TEXT_MUTED);
-        fl_font(FontLoader::Fonts::INTER_REGULAR, 12);
-        int usernameWidth = static_cast<int>(fl_width(username.c_str()));
-        int timeX = usernameX + usernameWidth + 8;
-        fl_draw(timeStr.c_str(), timeX, usernameY - 2);
-
-        fl_color(ThemeColors::TEXT_NORMAL);
-        fl_font(FontLoader::Fonts::INTER_REGULAR, 16);
-        int contentY = usernameY + 4;
-        fl_draw(msg.content.c_str(), usernameX, contentY);
-
-        yPos += avatarSize + 8;
-    }
+    yPos += kDateSeparatorPadding;
 }
 
 void TextChannelView::drawMessageInput() {
@@ -558,9 +854,9 @@ void TextChannelView::drawMessageInput() {
 
     ensureEmojiAtlases(iconSize);
     if (emojiHovered) {
-        RoundedStyle::drawRoundedRect(iconButtonX, iconButtonY, iconButtonSize, iconButtonSize,
+        RoundedStyle::drawRoundedRect(iconButtonX, iconButtonY, iconButtonSize, iconButtonSize, kInputIconButtonRadius,
                                       kInputIconButtonRadius, kInputIconButtonRadius, kInputIconButtonRadius,
-                                      kInputIconButtonRadius, ThemeColors::BG_ACCENT);
+                                      ThemeColors::BG_ACCENT);
     }
     if (!m_emojiFramesInactive.empty() && !m_emojiFramesActive.empty()) {
         size_t frameIndex = std::min(m_emojiFrameIndex, m_emojiFramesInactive.size() - 1);
@@ -574,9 +870,9 @@ void TextChannelView::drawMessageInput() {
     iconButtonX -= iconButtonSize + kInputIconSpacing;
 
     if (stickerHovered) {
-        RoundedStyle::drawRoundedRect(iconButtonX, iconButtonY, iconButtonSize, iconButtonSize,
+        RoundedStyle::drawRoundedRect(iconButtonX, iconButtonY, iconButtonSize, iconButtonSize, kInputIconButtonRadius,
                                       kInputIconButtonRadius, kInputIconButtonRadius, kInputIconButtonRadius,
-                                      kInputIconButtonRadius, ThemeColors::BG_ACCENT);
+                                      ThemeColors::BG_ACCENT);
     }
     Fl_Color stickerColor = stickerHovered ? ThemeColors::TEXT_NORMAL : ThemeColors::TEXT_MUTED;
     auto *stickerIcon = IconManager::load_recolored_icon("sticker", iconSize, stickerColor);
@@ -588,9 +884,9 @@ void TextChannelView::drawMessageInput() {
     iconButtonX -= iconButtonSize + kInputIconSpacing;
 
     if (gifHovered) {
-        RoundedStyle::drawRoundedRect(iconButtonX, iconButtonY, iconButtonSize, iconButtonSize,
+        RoundedStyle::drawRoundedRect(iconButtonX, iconButtonY, iconButtonSize, iconButtonSize, kInputIconButtonRadius,
                                       kInputIconButtonRadius, kInputIconButtonRadius, kInputIconButtonRadius,
-                                      kInputIconButtonRadius, ThemeColors::BG_ACCENT);
+                                      ThemeColors::BG_ACCENT);
     }
     Fl_Color gifColor = gifHovered ? ThemeColors::TEXT_NORMAL : ThemeColors::TEXT_MUTED;
     auto *gifIcon = IconManager::load_recolored_icon("gif", iconSize, gifColor);
@@ -621,6 +917,30 @@ void TextChannelView::ensureEmojiAtlases(int targetSize) {
     m_emojiFramesInactive.resize(commonFrameCount);
     m_emojiFramesActive.resize(commonFrameCount);
     m_emojiFrameIndex = 0;
+}
+
+bool TextChannelView::updateAvatarHover(int mx, int my, bool forceClear) {
+    std::string newMessageId;
+    std::string newHoverKey;
+
+    if (!forceClear) {
+        for (const auto &hitbox : m_avatarHitboxes) {
+            if (mx >= hitbox.x && mx < hitbox.x + hitbox.size && my >= hitbox.y && my < hitbox.y + hitbox.size) {
+                newMessageId = hitbox.messageId;
+                newHoverKey = hitbox.hoverKey;
+                break;
+            }
+        }
+    }
+
+    bool changed = newMessageId != m_hoveredAvatarMessageId || newHoverKey != m_hoveredAvatarKey;
+    if (changed) {
+        m_hoveredAvatarMessageId = newMessageId;
+        m_hoveredAvatarKey = newHoverKey;
+        MessageWidget::setHoveredAvatarKey(m_hoveredAvatarKey);
+    }
+
+    return changed;
 }
 
 bool TextChannelView::getEmojiButtonRect(int &outX, int &outY, int &outSize) const {
@@ -673,9 +993,39 @@ void TextChannelView::loadMessagesFromStore() {
     auto it = state.channelMessages.find(m_channelId);
     if (it != state.channelMessages.end()) {
         m_messages = it->second;
+        Logger::debug("TextChannelView: Loaded " + std::to_string(m_messages.size()) +
+                      " messages from Store for channel " + m_channelId);
     } else {
         m_messages.clear();
     }
+}
+
+void TextChannelView::loadMessages() {
+    loadMessagesFromStore();
+
+    if (m_channelId.empty()) {
+        return;
+    }
+
+    std::string channelId = m_channelId;
+
+    Discord::APIClient::get().getChannelMessages(
+        channelId, 50, std::nullopt,
+        [channelId](const Discord::APIClient::Json &messagesJson) {
+            std::vector<Message> messages;
+            for (const auto &msgJson : messagesJson) {
+                messages.push_back(Message::fromJson(msgJson));
+            }
+
+            Data::Database::get().insertMessages(messages);
+
+            Store::get().update([&](AppState &state) { state.channelMessages[channelId] = messages; });
+
+            Logger::info("Loaded " + std::to_string(messages.size()) + " messages for channel " + channelId);
+        },
+        [channelId](int code, const std::string &error) {
+            Logger::error("Failed to load messages for channel " + channelId + ": " + error);
+        });
 }
 
 void TextChannelView::updatePermissions() {

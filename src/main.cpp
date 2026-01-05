@@ -16,6 +16,8 @@
 
 #include <string>
 
+#include "data/Database.h"
+#include "net/APIClient.h"
 #include "net/Gateway.h"
 #include "router/Router.h"
 #include "screens/HomeScreen.h"
@@ -42,6 +44,14 @@ int main(int argc, char **argv) {
 
     Logger::setLevel(Logger::Level::DEBUG);
     Logger::info("Application started");
+
+    if (!Data::Database::get().initialize()) {
+        Logger::error("Failed to initialize database");
+        return 1;
+    }
+
+    Data::Database::get().clearAllMessages();
+    Logger::info("Database initialized and messages cleared for fresh session");
 
     init_theme();
 
@@ -127,6 +137,7 @@ int main(int argc, char **argv) {
     if (token.has_value() && !token.value().empty()) {
         Logger::info("Found existing token, attempting to authenticate...");
 
+        Discord::APIClient::get().setToken(token.value());
         gateway.setAuthenticated(false);
         gateway.setIdentityProvider([token = token.value()]() -> Gateway::Json {
             const std::string launchId = UuidHelper::generate();

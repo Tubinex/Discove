@@ -91,7 +91,7 @@ GuildIcon::GuildIcon(int x, int y, int size, const std::string &guildId, const s
     }
 
     if (!iconHash.empty()) {
-        std::string url = CDNUtils::getGuildIconUrl(guildId, iconHash, size * 2, false);
+        std::string url = CDNUtils::getGuildIconUrl(guildId, iconHash, size, false);
         Images::loadImageAsync(url, [this](Fl_RGB_Image *img) {
             {
                 std::scoped_lock lock(iconsMutex);

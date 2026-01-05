@@ -39,6 +39,7 @@ find_package(FLTK CONFIG REQUIRED)
 find_package(libwebsockets CONFIG REQUIRED)
 find_package(CURL REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+find_package(unofficial-sqlite3 CONFIG REQUIRED)
 
 file(GLOB_RECURSE SOURCES
     "${CMAKE_SOURCE_DIR}/src/*.cpp"
@@ -136,6 +137,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     websockets
     CURL::libcurl
     nlohmann_json::nlohmann_json
+    unofficial::sqlite3::sqlite3
 )
 
 if(WIN32)

@@ -5,8 +5,130 @@
 #include "state/Store.h"
 #include "ui/Theme.h"
 #include "utils/Logger.h"
+#include "utils/Permissions.h"
 
 #include <FL/fl_draw.H>
+
+#include <algorithm>
+#include <map>
+
+namespace {
+bool isSelectableTextChannel(ChannelType type) {
+    switch (type) {
+    case ChannelType::GUILD_TEXT:
+    case ChannelType::GUILD_ANNOUNCEMENT:
+    case ChannelType::ANNOUNCEMENT_THREAD:
+    case ChannelType::PUBLIC_THREAD:
+    case ChannelType::PRIVATE_THREAD:
+    case ChannelType::GUILD_FORUM:
+    case ChannelType::GUILD_MEDIA:
+        return true;
+    default:
+        return false;
+    }
+}
+
+std::string findFirstVisibleTextChannel(const AppState &state, const std::string &guildId) {
+    auto channelIt = state.guildChannels.find(guildId);
+    if (channelIt == state.guildChannels.end()) {
+        return "";
+    }
+
+    if (!state.currentUser.has_value()) {
+        return "";
+    }
+
+    std::vector<std::string> userRoleIds;
+    auto memberIt = state.guildMembers.find(guildId);
+    if (memberIt != state.guildMembers.end()) {
+        userRoleIds = memberIt->second.roleIds;
+    }
+
+    std::vector<Role> guildRoles;
+    auto rolesIt = state.guildRoles.find(guildId);
+    if (rolesIt != state.guildRoles.end()) {
+        guildRoles = rolesIt->second;
+    }
+
+    uint64_t basePermissions = PermissionUtils::computeBasePermissions(guildId, userRoleIds, guildRoles);
+
+    struct CategoryInfo {
+        int position = 0;
+        std::vector<std::shared_ptr<GuildChannel>> channels;
+    };
+
+    std::map<std::string, CategoryInfo> categories;
+    std::vector<std::shared_ptr<GuildChannel>> uncategorized;
+    std::vector<std::shared_ptr<GuildChannel>> regularChannels;
+
+    for (const auto &channel : channelIt->second) {
+        if (!channel || !channel->name.has_value()) {
+            continue;
+        }
+
+        if (channel->type == ChannelType::GUILD_CATEGORY) {
+            categories[channel->id].position = channel->position;
+        } else {
+            regularChannels.push_back(channel);
+        }
+    }
+
+    for (const auto &channel : regularChannels) {
+        bool canView =
+            PermissionUtils::canViewChannel(guildId, userRoleIds, channel->permissionOverwrites, basePermissions);
+        if (!canView) {
+            continue;
+        }
+
+        if (channel->parentId.has_value() && !channel->parentId->empty()) {
+            auto catIt = categories.find(*channel->parentId);
+            if (catIt != categories.end()) {
+                catIt->second.channels.push_back(channel);
+            } else {
+                uncategorized.push_back(channel);
+            }
+        } else {
+            uncategorized.push_back(channel);
+        }
+    }
+
+    std::stable_sort(uncategorized.begin(), uncategorized.end(),
+                     [](const std::shared_ptr<GuildChannel> &a, const std::shared_ptr<GuildChannel> &b) {
+                         return a->position < b->position;
+                     });
+
+    std::vector<std::pair<std::string, CategoryInfo>> orderedCategories;
+    orderedCategories.reserve(categories.size());
+    for (auto &entry : categories) {
+        if (!entry.second.channels.empty()) {
+            std::stable_sort(entry.second.channels.begin(), entry.second.channels.end(),
+                             [](const std::shared_ptr<GuildChannel> &a, const std::shared_ptr<GuildChannel> &b) {
+                                 return a->position < b->position;
+                             });
+            orderedCategories.push_back(entry);
+        }
+    }
+
+    std::stable_sort(orderedCategories.begin(), orderedCategories.end(),
+                     [](const auto &a, const auto &b) { return a.second.position < b.second.position; });
+
+    for (const auto &channel : uncategorized) {
+        if (isSelectableTextChannel(channel->type)) {
+            return channel->id;
+        }
+    }
+
+    for (const auto &category : orderedCategories) {
+        for (const auto &channel : category.second.channels) {
+            if (isSelectableTextChannel(channel->type)) {
+                return channel->id;
+            }
+        }
+    }
+
+    return "";
+}
+} // namespace
 
 MainLayoutScreen::MainLayoutScreen(int x, int y, int w, int h) : Screen(x, y, w, h, "MainLayout") {
     Logger::debug("MainLayoutScreen constructor called");
@@ -243,7 +365,15 @@ void MainLayoutScreen::createGuildChannelView(const std::string &guildId, const 
 void MainLayoutScreen::setupNavigationCallbacks() {
     m_guildBar->setOnGuildSelected([](const std::string &guildId) {
         Logger::info("Guild selected: " + guildId);
-        Router::navigate("/channels/" + guildId + "/1");
+
+        auto state = Store::get().snapshot();
+        std::string channelId = findFirstVisibleTextChannel(state, guildId);
+        if (!channelId.empty()) {
+            Router::navigate("/channels/" + guildId + "/" + channelId);
+            return;
+        }
+
+        Logger::warn("No visible text channels found for guild: " + guildId);
     });
 
     m_guildBar->setOnHomeClicked([]() { Router::navigate("/channels/me"); });

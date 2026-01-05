@@ -1,8 +1,10 @@
 #include "net/Gateway.h"
 
+#include "data/Database.h"
 #include "models/Channel.h"
 #include "models/GuildFolder.h"
 #include "models/GuildMember.h"
+#include "models/Message.h"
 #include "models/Role.h"
 #include "models/User.h"
 #include "state/Store.h"
@@ -804,63 +806,27 @@ void Gateway::handleReadySupplemental(const Json &data) {
 }
 
 void Gateway::handleMessageCreate(const Json &data) {
-    std::string messageId;
-    std::string channelId;
-    std::string content;
-    long long timestampMs = 0;
+    try {
+        Message message = Message::fromJson(data);
+        Data::Database::get().insertMessage(message);
 
-    if (data.contains("id") && data["id"].is_string()) {
-        messageId = data["id"].get<std::string>();
-    }
+        Store::get().update([&](AppState &state) {
+            auto &messages = state.channelMessages[message.channelId];
 
-    if (data.contains("channel_id") && data["channel_id"].is_string()) {
-        channelId = data["channel_id"].get<std::string>();
-    }
+            auto it =
+                std::find_if(messages.begin(), messages.end(), [&](const Message &m) { return m.id == message.id; });
 
-    if (data.contains("content") && data["content"].is_string()) {
-        content = data["content"].get<std::string>();
-    }
+            if (it == messages.end()) {
+                messages.push_back(message);
 
-    auto now = std::chrono::system_clock::now();
-    timestampMs = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+                std::sort(messages.begin(), messages.end(),
+                          [](const Message &a, const Message &b) { return a.timestamp < b.timestamp; });
+            }
+        });
 
-    std::string authorId;
-    std::string authorUsername;
-    std::string authorDiscriminator;
-    std::string authorGlobalName;
-    std::string authorAvatar;
-    bool isBot = false;
-
-    if (data.contains("author") && data["author"].is_object()) {
-        const auto &author = data["author"];
-
-        if (author.contains("id") && author["id"].is_string()) {
-            authorId = author["id"].get<std::string>();
-        }
-
-        if (author.contains("username") && author["username"].is_string()) {
-            authorUsername = author["username"].get<std::string>();
-        }
-
-        if (author.contains("discriminator") && author["discriminator"].is_string()) {
-            authorDiscriminator = author["discriminator"].get<std::string>();
-        }
-
-        if (author.contains("global_name") && author["global_name"].is_string()) {
-            authorGlobalName = author["global_name"].get<std::string>();
-        }
-
-        if (author.contains("avatar") && author["avatar"].is_string()) {
-            authorAvatar = author["avatar"].get<std::string>();
-        }
-
-        if (author.contains("bot") && author["bot"].is_boolean()) {
-            isBot = author["bot"].get<bool>();
-        }
-    }
-
-    if (messageId.empty() || channelId.empty() || authorId.empty()) {
-        return;
+        Logger::debug("Stored message " + message.id + " in channel " + message.channelId);
+    } catch (const std::exception &e) {
+        Logger::error("Failed to handle MESSAGE_CREATE: " + std::string(e.what()));
     }
 }
 

@@ -37,9 +37,9 @@ inline int normalizeSize(int size) {
  * @brief Get the file extension for an image hash
  * @param hash The image hash
  * @param preferWebp Whether to prefer .webp over .png for static images
- * @return ".gif" for animated images, ".webp" or ".png" for static
+ * @return ".gif" for animated images, ".png" or ".webp" for static
  */
-std::string getImageExtension(const std::string &hash, bool preferWebp = true);
+std::string getImageExtension(const std::string &hash, bool preferWebp = false);
 
 /**
  * @brief Construct user avatar URL

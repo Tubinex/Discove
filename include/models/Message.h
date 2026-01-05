@@ -81,6 +81,19 @@ class Message {
     std::string getJumpUrl() const;
 
     /**
+     * @brief Get the display name for the message author
+     * @return Display name
+     */
+    std::string getAuthorDisplayName() const;
+
+    /**
+     * @brief Get the avatar URL for the message author
+     * @param size Desired image size (default 64)
+     * @return CDN URL for avatar
+     */
+    std::string getAuthorAvatarUrl(int size = 64) const;
+
+    /**
      * @brief Check if message was edited
      * @return true if message has been edited
      */
@@ -89,12 +102,19 @@ class Message {
     std::string id;
     std::string channelId;
     std::string authorId;
+    std::string authorUsername;
+    std::string authorGlobalName;
+    std::string authorNickname;
+    std::string authorDiscriminator;
+    std::string authorAvatarHash;
+    std::string authorMemberAvatarHash;
     std::string content;
     std::chrono::system_clock::time_point timestamp;
     std::optional<std::chrono::system_clock::time_point> editedTimestamp;
     bool tts = false;
     bool mentionEveryone = false;
     std::vector<std::string> mentionIds;
+    std::vector<std::string> mentionDisplayNames;
     std::vector<std::string> mentionRoleIds;
     std::vector<Attachment> attachments;
     std::vector<Embed> embeds;

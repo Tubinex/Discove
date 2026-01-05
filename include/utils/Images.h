@@ -15,6 +15,8 @@ void loadImageAsync(const std::string &url, ImageCallback callback);
 
 Fl_RGB_Image *getCachedImage(const std::string &url);
 
+void evictFromMemory(const std::string &url);
+
 std::string getCacheFilePath(const std::string &url, const std::string &extension);
 
 void clearCache();
