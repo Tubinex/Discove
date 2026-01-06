@@ -5,6 +5,7 @@
 #include "models/GuildFolder.h"
 #include "models/GuildMember.h"
 #include "models/Message.h"
+#include "models/Presence.h"
 #include "models/Role.h"
 #include "models/User.h"
 #include "state/Store.h"
@@ -19,6 +20,73 @@
 #include <memory>
 #include <sstream>
 #include <utility>
+
+namespace {
+std::string statusToString(Status status) {
+    switch (status) {
+    case Status::ONLINE:
+        return "online";
+    case Status::IDLE:
+        return "idle";
+    case Status::DND:
+        return "dnd";
+    case Status::INVISIBLE:
+    case Status::OFFLINE:
+    default:
+        return "offline";
+    }
+}
+
+uint64_t parseSnowflake(const std::string &value) {
+    if (value.empty()) {
+        return 0;
+    }
+    try {
+        return std::stoull(value);
+    } catch (...) {
+        return 0;
+    }
+}
+
+uint64_t lastMessageSortKey(const std::shared_ptr<DMChannel> &channel) {
+    if (!channel || !channel->lastMessageId.has_value()) {
+        return 0;
+    }
+    return parseSnowflake(*channel->lastMessageId);
+}
+
+void sortPrivateChannelsByLastMessage(std::vector<std::shared_ptr<DMChannel>> &channels) {
+    std::stable_sort(channels.begin(), channels.end(),
+                     [](const std::shared_ptr<DMChannel> &a, const std::shared_ptr<DMChannel> &b) {
+                         uint64_t ka = lastMessageSortKey(a);
+                         uint64_t kb = lastMessageSortKey(b);
+                         if (ka != kb) {
+                             return ka > kb;
+                         }
+                         if (!a || !b) {
+                             return static_cast<bool>(a) > static_cast<bool>(b);
+                         }
+                         return a->id > b->id;
+                     });
+}
+
+bool upsertUser(std::unordered_map<std::string, User> &users, const User &user) {
+    auto it = users.find(user.id);
+    if (it == users.end()) {
+        users.emplace(user.id, user);
+        return true;
+    }
+
+    const User &existing = it->second;
+    if (existing.username == user.username && existing.discriminator == user.discriminator && existing.globalName == user.globalName &&
+        existing.avatar == user.avatar) {
+        return false;
+    }
+
+    it->second = user;
+    return true;
+}
+} // namespace
 
 static int lwsCallback(lws *wsi, lws_callback_reasons reason, void *user, void *in, size_t len) {
     Gateway *gateway = static_cast<Gateway *>(lws_context_user(lws_get_context(wsi)));
@@ -327,6 +395,7 @@ void Gateway::receive(const std::string &text) {
                 {"MESSAGE_REACTION_REMOVE_EMOJI",
                  [](Gateway *gw, const Json &data) { gw->handleMessageReactionRemoveEmoji(data); }},
                 {"CHANNEL_UPDATE", [](Gateway *gw, const Json &data) { gw->handleChannelUpdate(data); }},
+                {"PRESENCE_UPDATE", [](Gateway *gw, const Json &data) { gw->handlePresenceUpdate(data); }},
                 {"USER_SETTINGS_PROTO_UPDATE",
                  [](Gateway *gw, const Json &data) { gw->handleUserSettingsProtoUpdate(data); }},
                 {"RESUMED", [](Gateway *, const Json &) { Logger::info("Session successfully resumed"); }},
@@ -746,55 +815,92 @@ void Gateway::handleReady(const Json &data) {
         Logger::info("Processing " + std::to_string(data["private_channels"].size()) + " private channels");
 
         std::vector<std::shared_ptr<DMChannel>> privateChannels;
-        for (const auto &privateChannelJson : data["private_channels"]) {
-            auto channel = Channel::fromJson(privateChannelJson);
-            if (auto *dmChannel = dynamic_cast<DMChannel *>(channel.get())) {
-                privateChannels.push_back(std::shared_ptr<DMChannel>(static_cast<DMChannel *>(channel.release())));
-            }
-        }
-
-        size_t dmCount = privateChannels.size();
-        Store::get().update([privateChannels = std::move(privateChannels)](AppState &appState) mutable {
-            appState.privateChannels = std::move(privateChannels);
-        });
-
-        Logger::info("Stored " + std::to_string(dmCount) + " DM channels in AppState");
-    }
-    if (data.contains("users") && data["users"].is_array()) {
-        Logger::info("Processing " + std::to_string(data["users"].size()) + " users for collectibles");
-
+        std::unordered_map<std::string, User> users;
         size_t userCount = 0;
         size_t avatarDecorationCount = 0;
         size_t nameplateCount = 0;
 
-        for (const auto &userJson : data["users"]) {
-            try {
-                User user = User::fromJson(userJson);
-                userCount++;
+        if (data.contains("users") && data["users"].is_array()) {
+            Logger::info("Processing " + std::to_string(data["users"].size()) + " users for collectibles");
 
-                std::string username = user.getDisplayName();
-                if (username.empty()) {
-                    username = user.username;
+            for (const auto &userJson : data["users"]) {
+                try {
+                    User user = User::fromJson(userJson);
+                    userCount++;
+
+                    std::string decorationUrl = user.getAvatarDecorationUrl();
+                    if (!decorationUrl.empty()) {
+                        avatarDecorationCount++;
+                    }
+
+                    std::string nameplateUrl = user.getNameplateUrl();
+                    if (!nameplateUrl.empty()) {
+                        nameplateCount++;
+                    }
+
+                    users[user.id] = std::move(user);
+                } catch (const std::exception &e) {
+                    Logger::warn("Failed to parse user for collectibles: " + std::string(e.what()));
+                }
+            }
+
+            Logger::info("Collectibles summary: " + std::to_string(avatarDecorationCount) + " avatar decorations, " +
+                         std::to_string(nameplateCount) + " nameplates from " + std::to_string(userCount) + " users");
+        }
+
+        for (const auto &privateChannelJson : data["private_channels"]) {
+            auto channel = Channel::fromJson(privateChannelJson);
+            if (auto *dmChannel = dynamic_cast<DMChannel *>(channel.get())) {
+                std::shared_ptr<DMChannel> dm(static_cast<DMChannel *>(channel.release()));
+
+                for (const auto &recipient : dm->recipients) {
+                    users[recipient.id] = recipient;
                 }
 
-                std::string decorationUrl = user.getAvatarDecorationUrl();
-                if (!decorationUrl.empty()) {
-                    avatarDecorationCount++;
-                }
-
-                std::string nameplateUrl = user.getNameplateUrl();
-                if (!nameplateUrl.empty()) {
-                    nameplateCount++;
-                }
-            } catch (const std::exception &e) {
-                Logger::warn("Failed to parse user for collectibles: " + std::string(e.what()));
+                privateChannels.push_back(std::move(dm));
             }
         }
 
-        Logger::info("Collectibles summary: " + std::to_string(avatarDecorationCount) + " avatar decorations, " +
-                     std::to_string(nameplateCount) + " nameplates from " + std::to_string(userCount) + " users");
+        sortPrivateChannelsByLastMessage(privateChannels);
+
+        size_t dmCount = privateChannels.size();
+        Store::get().update([privateChannels = std::move(privateChannels), users = std::move(users)](AppState &appState) mutable {
+            appState.privateChannels = std::move(privateChannels);
+
+            bool changed = false;
+            for (auto &entry : users) {
+                changed |= upsertUser(appState.usersById, entry.second);
+            }
+            if (changed) {
+                appState.usersRevision++;
+            }
+        });
+
+        Logger::info("Stored " + std::to_string(dmCount) + " DM channels in AppState");
     }
-}
+    if (data.contains("presences") && data["presences"].is_array()) {
+        std::unordered_map<std::string, std::string> statuses;
+
+        for (const auto &presenceJson : data["presences"]) {
+            try {
+                Presence presence = Presence::fromJson(presenceJson);
+                if (!presence.userId.empty()) {
+                    statuses[presence.userId] = statusToString(presence.status);
+                }
+            } catch (const std::exception &e) {
+                Logger::warn("Failed to parse presence: " + std::string(e.what()));
+            }
+        }
+
+        if (!statuses.empty()) {
+            Store::get().update([statuses = std::move(statuses)](AppState &state) mutable {
+                for (auto &entry : statuses) {
+                    state.userStatuses[entry.first] = entry.second;
+                }
+            });
+        }
+    }
+  }
 
 void Gateway::handleReadySupplemental(const Json &data) {
     try {
@@ -812,6 +918,62 @@ void Gateway::handleReadySupplemental(const Json &data) {
     if (data.contains("guilds") && data["guilds"].is_array()) {
         const size_t guildCount = data["guilds"].size();
         (void)guildCount;
+    }
+
+    auto parsePresencesArray = [&](const Json &arr, std::unordered_map<std::string, std::string> &out) {
+        if (!arr.is_array()) {
+            return;
+        }
+        for (const auto &presenceJson : arr) {
+            if (!presenceJson.is_object()) {
+                continue;
+            }
+            try {
+                Presence presence = Presence::fromJson(presenceJson);
+                if (!presence.userId.empty()) {
+                    out[presence.userId] = statusToString(presence.status);
+                }
+            } catch (const std::exception &e) {
+                Logger::warn("Failed to parse presence in READY_SUPPLEMENTAL: " + std::string(e.what()));
+            }
+        }
+    };
+
+    std::unordered_map<std::string, std::string> statuses;
+
+    if (data.contains("presences")) {
+        parsePresencesArray(data["presences"], statuses);
+    }
+
+    if (data.contains("merged_presences") && data["merged_presences"].is_object()) {
+        const auto &merged = data["merged_presences"];
+
+        if (merged.contains("friends")) {
+            parsePresencesArray(merged["friends"], statuses);
+        }
+
+        if (merged.contains("presences")) {
+            parsePresencesArray(merged["presences"], statuses);
+        }
+
+        if (merged.contains("guilds") && merged["guilds"].is_object()) {
+            for (const auto &kv : merged["guilds"].items()) {
+                const auto &node = kv.value();
+                if (node.is_array()) {
+                    parsePresencesArray(node, statuses);
+                } else if (node.is_object() && node.contains("presences")) {
+                    parsePresencesArray(node["presences"], statuses);
+                }
+            }
+        }
+    }
+
+    if (!statuses.empty()) {
+        Store::get().update([statuses = std::move(statuses)](AppState &state) mutable {
+            for (auto &entry : statuses) {
+                state.userStatuses[entry.first] = std::move(entry.second);
+            }
+        });
     }
 }
 
@@ -847,6 +1009,36 @@ void Gateway::handleMessageCreate(const Json &data) {
                         state.pendingChannelMessages.erase(pendingIt);
                     }
                 }
+            }
+
+            if (!message.authorId.empty()) {
+                User user;
+                user.id = message.authorId;
+                user.username = message.authorUsername;
+                user.discriminator = message.authorDiscriminator.empty() ? "0" : message.authorDiscriminator;
+                if (!message.authorGlobalName.empty()) {
+                    user.globalName = message.authorGlobalName;
+                }
+                if (!message.authorAvatarHash.empty()) {
+                    user.avatar = message.authorAvatarHash;
+                }
+
+                if (upsertUser(state.usersById, user)) {
+                    state.usersRevision++;
+                }
+            }
+
+            bool dmChannelUpdated = false;
+            for (auto &dm : state.privateChannels) {
+                if (dm && dm->id == message.channelId) {
+                    dm->lastMessageId = message.id;
+                    dmChannelUpdated = true;
+                    break;
+                }
+            }
+
+            if (dmChannelUpdated) {
+                sortPrivateChannelsByLastMessage(state.privateChannels);
             }
         });
 
@@ -1252,6 +1444,16 @@ void Gateway::handleChannelUpdate(const Json &data) {
                 if (!replaced) {
                     state.privateChannels.push_back(updated);
                 }
+
+                sortPrivateChannelsByLastMessage(state.privateChannels);
+
+                bool changed = false;
+                for (const auto &recipient : updated->recipients) {
+                    changed |= upsertUser(state.usersById, recipient);
+                }
+                if (changed) {
+                    state.usersRevision++;
+                }
             });
 
             Logger::debug("Updated DM channel " + updated->id);
@@ -1261,6 +1463,22 @@ void Gateway::handleChannelUpdate(const Json &data) {
         Logger::warn("CHANNEL_UPDATE for unsupported channel type");
     } catch (const std::exception &e) {
         Logger::error("Failed to handle CHANNEL_UPDATE: " + std::string(e.what()));
+    }
+}
+
+void Gateway::handlePresenceUpdate(const Json &data) {
+    try {
+        Presence presence = Presence::fromJson(data);
+        if (presence.userId.empty()) {
+            return;
+        }
+
+        std::string status = statusToString(presence.status);
+        Store::get().update([userId = presence.userId, status = std::move(status)](AppState &state) mutable {
+            state.userStatuses[userId] = std::move(status);
+        });
+    } catch (const std::exception &e) {
+        Logger::error("Failed to handle PRESENCE_UPDATE: " + std::string(e.what()));
     }
 }
 

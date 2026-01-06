@@ -70,6 +70,13 @@ void APIClient::sendChannelMessage(const std::string &channelId, const std::stri
     performPost(endpoint.str(), payload.dump(), onSuccess, onError);
 }
 
+void APIClient::getUser(const std::string &userId, SuccessCallback onSuccess, ErrorCallback onError) {
+    std::ostringstream endpoint;
+    endpoint << "/users/" << userId;
+    Logger::debug("API: Requesting user " + userId);
+    performGet(endpoint.str(), onSuccess, onError);
+}
+
 void APIClient::performGet(const std::string &endpoint, SuccessCallback onSuccess, ErrorCallback onError) {
     std::string token;
     {

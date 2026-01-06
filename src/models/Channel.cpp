@@ -2,6 +2,8 @@
 
 #include "utils/CDN.h"
 
+#include <unordered_set>
+
 std::unique_ptr<Channel> Channel::fromJson(const nlohmann::json &j) {
     ChannelType type = static_cast<ChannelType>(j.at("type").get<int>());
     std::unique_ptr<Channel> channel;
@@ -122,9 +124,24 @@ std::unique_ptr<Channel> Channel::fromJson(const nlohmann::json &j) {
     }
 
     if (auto *dmChannel = dynamic_cast<DMChannel *>(channel.get())) {
+        std::unordered_set<std::string> seenRecipientIds;
+
+        if (j.contains("recipients") && j["recipients"].is_array()) {
+            for (const auto &recipient : j["recipients"]) {
+                User user = User::fromJson(recipient);
+                dmChannel->recipients.push_back(user);
+                if (seenRecipientIds.insert(user.id).second) {
+                    dmChannel->recipientIds.push_back(user.id);
+                }
+            }
+        }
+
         if (j.contains("recipient_ids") && j["recipient_ids"].is_array()) {
             for (const auto &recipient : j["recipient_ids"]) {
-                dmChannel->recipientIds.push_back(recipient.get<std::string>());
+                std::string id = recipient.get<std::string>();
+                if (seenRecipientIds.insert(id).second) {
+                    dmChannel->recipientIds.push_back(id);
+                }
             }
         }
 

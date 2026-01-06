@@ -27,6 +27,7 @@ class APIClient {
                             SuccessCallback onSuccess, ErrorCallback onError);
     void sendChannelMessage(const std::string &channelId, const std::string &content, const std::string &nonce,
                             SuccessCallback onSuccess, ErrorCallback onError);
+    void getUser(const std::string &userId, SuccessCallback onSuccess, ErrorCallback onError);
 
   private:
     APIClient() = default;

@@ -70,6 +70,9 @@ struct AppState {
     int counter = 0;
     RouteState route;
     std::optional<UserProfile> currentUser;
+    std::unordered_map<std::string, std::string> userStatuses;
+    std::unordered_map<std::string, User> usersById;
+    uint64_t usersRevision = 0;
     std::vector<GuildFolder> guildFolders;
     std::vector<uint64_t> guildPositions;
     std::vector<GuildInfo> guilds;

@@ -139,6 +139,7 @@ class GuildSidebar : public Fl_Group {
     int m_scrollOffset = 0;
     std::function<void(const std::string &)> m_onChannelSelected;
     Store::ListenerId m_storeListenerId = 0;
+    std::shared_ptr<bool> m_isAlive;
 
     static constexpr int CHANNEL_HEIGHT = 36;
     static constexpr int CATEGORY_HEIGHT = 40;

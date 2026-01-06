@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "models/PermissionOverwrite.h"
+#include "models/User.h"
 #include <nlohmann/json.hpp>
 
 /**
@@ -127,6 +128,7 @@ class DMChannel : public Channel {
     std::string getIconUrl(int size = 256) const;
 
     std::vector<std::string> recipientIds;
+    std::vector<User> recipients;
     std::optional<std::string> icon;
     std::optional<std::string> ownerId;
 };

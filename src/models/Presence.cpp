@@ -44,6 +44,9 @@ Presence Presence::fromJson(const nlohmann::json &j) {
             presence.userId = user["id"].get<std::string>();
         }
     }
+    if (presence.userId.empty() && j.contains("user_id") && !j["user_id"].is_null()) {
+        presence.userId = j["user_id"].get<std::string>();
+    }
 
     if (j.contains("guild_id") && !j["guild_id"].is_null()) {
         presence.guildId = j["guild_id"].get<std::string>();

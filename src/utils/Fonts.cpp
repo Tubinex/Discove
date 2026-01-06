@@ -5,6 +5,7 @@
 #include <FL/Fl.H>
 #include <algorithm>
 #include <atomic>
+#include <cstdlib>
 #include <deque>
 #include <filesystem>
 #include <unordered_map>
@@ -87,6 +88,11 @@ bool endsWith(const std::string &value, const std::string &suffix) {
     return value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
+bool shouldLoadAllFonts() {
+    const char *value = std::getenv("DISCOVE_LOAD_ALL_FONTS");
+    return value && *value != '\0';
+}
+
 #ifdef _WIN32
 std::string makeFltkFontName(const std::string &fontName) {
     if (endsWith(fontName, " Italic")) {
@@ -105,6 +111,27 @@ std::string makeFltkFontName(const std::string &fontName) {
 }
 
 bool loadFontFromMemoryWindows(const unsigned char *fontData, size_t fontSize, const std::string &fontName) {
+    DWORD loadedCount = 0;
+    HANDLE fontHandle = AddFontMemResourceEx(const_cast<void *>(static_cast<const void *>(fontData)),
+                                             static_cast<DWORD>(fontSize), nullptr, &loadedCount);
+    if (fontHandle != nullptr && loadedCount > 0) {
+        Logger::debug("AddFontMemResourceEx loaded " + std::to_string(loadedCount) + " font(s) for: " + fontName);
+        std::string fltkName = makeFltkFontName(fontName);
+        fontNameStorage.push_back(fltkName);
+        const char *persistentName = fontNameStorage.back().c_str();
+
+        Fl::set_font(nextFontId, persistentName);
+        fontMap[fontName] = nextFontId;
+        nextFontId++;
+
+        Logger::info("Loaded embedded font: " + fontName);
+        return true;
+    }
+
+    DWORD error = GetLastError();
+    Logger::warn("AddFontMemResourceEx failed for: " + fontName + " (error: " + std::to_string(error) +
+                 "), falling back to temp file");
+
     std::filesystem::path tempDir = ensureTempFontDir();
     if (tempDir.empty()) {
         Logger::error("Failed to get temp directory for font: " + fontName);
@@ -137,7 +164,7 @@ bool loadFontFromMemoryWindows(const unsigned char *fontData, size_t fontSize, c
     }
     CloseHandle(hFile);
 
-    int result = AddFontResourceExW(tempFile.c_str(), 0, 0);
+    int result = AddFontResourceExW(tempFile.c_str(), FR_PRIVATE, 0);
     if (result == 0) {
         DWORD error = GetLastError();
         Logger::error("Failed to load font from temp file: " + fontName + " (error: " + std::to_string(error) + ")");
@@ -168,7 +195,7 @@ bool loadFontWindows(const std::string &fontPath, const std::string &fontName) {
     std::wstring widePath(wideSize, 0);
     MultiByteToWideChar(CP_UTF8, 0, fontPath.c_str(), -1, &widePath[0], wideSize);
 
-    int result = AddFontResourceExW(widePath.c_str(), 0, 0);
+    int result = AddFontResourceExW(widePath.c_str(), FR_PRIVATE, 0);
     if (result == 0) {
         Logger::error("Failed to load font from: " + fontPath);
         return false;
@@ -402,30 +429,12 @@ Fl_Font INTER_BLACK_ITALIC = FL_HELVETICA_BOLD_ITALIC;
 
 bool loadFonts() {
     bool success = true;
+    bool loadAllFonts = shouldLoadAllFonts();
 
 #ifdef FONTS_EMBEDDED
     Logger::info("Loading embedded fonts...");
-
-    if (loadFontFromMemory(EmbeddedFonts::INTER_THIN_DATA, EmbeddedFonts::INTER_THIN_DATA_size, "Inter Thin")) {
-        Fonts::INTER_THIN = getFontId("Inter Thin");
-    } else {
-        Logger::warn("Failed to load embedded Inter Thin");
-        success = false;
-    }
-
-    if (loadFontFromMemory(EmbeddedFonts::INTER_EXTRA_LIGHT_DATA, EmbeddedFonts::INTER_EXTRA_LIGHT_DATA_size,
-                           "Inter ExtraLight")) {
-        Fonts::INTER_EXTRA_LIGHT = getFontId("Inter ExtraLight");
-    } else {
-        Logger::warn("Failed to load embedded Inter ExtraLight");
-        success = false;
-    }
-
-    if (loadFontFromMemory(EmbeddedFonts::INTER_LIGHT_DATA, EmbeddedFonts::INTER_LIGHT_DATA_size, "Inter Light")) {
-        Fonts::INTER_LIGHT = getFontId("Inter Light");
-    } else {
-        Logger::warn("Failed to load embedded Inter Light");
-        success = false;
+    if (!loadAllFonts) {
+        Logger::info("Loading core font weights only (set DISCOVE_LOAD_ALL_FONTS=1 to load all weights).");
     }
 
     if (loadFontFromMemory(EmbeddedFonts::INTER_REGULAR_DATA, EmbeddedFonts::INTER_REGULAR_DATA_size, "Inter")) {
@@ -459,67 +468,11 @@ bool loadFonts() {
         success = false;
     }
 
-    if (loadFontFromMemory(EmbeddedFonts::INTER_EXTRA_BOLD_DATA, EmbeddedFonts::INTER_EXTRA_BOLD_DATA_size,
-                           "Inter ExtraBold")) {
-        Fonts::INTER_EXTRA_BOLD = getFontId("Inter ExtraBold");
-        Logger::info("INTER_EXTRA_BOLD assigned font ID: " + std::to_string(Fonts::INTER_EXTRA_BOLD));
-    } else {
-        Logger::warn("Failed to load embedded Inter ExtraBold");
-        success = false;
-    }
-
-    if (loadFontFromMemory(EmbeddedFonts::INTER_BLACK_DATA, EmbeddedFonts::INTER_BLACK_DATA_size, "Inter Black")) {
-        Fonts::INTER_BLACK = getFontId("Inter Black");
-    } else {
-        Logger::warn("Failed to load embedded Inter Black");
-        success = false;
-    }
-
-    if (loadFontFromMemory(EmbeddedFonts::INTER_THIN_ITALIC_DATA, EmbeddedFonts::INTER_THIN_ITALIC_DATA_size,
-                           "Inter Thin Italic")) {
-        Fonts::INTER_THIN_ITALIC = getFontId("Inter Thin Italic");
-    } else {
-        Logger::warn("Failed to load embedded Inter Thin Italic");
-        success = false;
-    }
-
-    if (loadFontFromMemory(EmbeddedFonts::INTER_EXTRA_LIGHT_ITALIC_DATA,
-                           EmbeddedFonts::INTER_EXTRA_LIGHT_ITALIC_DATA_size, "Inter ExtraLight Italic")) {
-        Fonts::INTER_EXTRA_LIGHT_ITALIC = getFontId("Inter ExtraLight Italic");
-    } else {
-        Logger::warn("Failed to load embedded Inter Extra Light Italic");
-        success = false;
-    }
-
-    if (loadFontFromMemory(EmbeddedFonts::INTER_LIGHT_ITALIC_DATA, EmbeddedFonts::INTER_LIGHT_ITALIC_DATA_size,
-                           "Inter Light Italic")) {
-        Fonts::INTER_LIGHT_ITALIC = getFontId("Inter Light Italic");
-    } else {
-        Logger::warn("Failed to load embedded Inter Light Italic");
-        success = false;
-    }
-
     if (loadFontFromMemory(EmbeddedFonts::INTER_REGULAR_ITALIC_DATA, EmbeddedFonts::INTER_REGULAR_ITALIC_DATA_size,
                            "Inter Italic")) {
         Fonts::INTER_REGULAR_ITALIC = getFontId("Inter Italic");
     } else {
         Logger::warn("Failed to load embedded Inter Regular Italic");
-        success = false;
-    }
-
-    if (loadFontFromMemory(EmbeddedFonts::INTER_MEDIUM_ITALIC_DATA, EmbeddedFonts::INTER_MEDIUM_ITALIC_DATA_size,
-                           "Inter Medium Italic")) {
-        Fonts::INTER_MEDIUM_ITALIC = getFontId("Inter Medium Italic");
-    } else {
-        Logger::warn("Failed to load embedded Inter Medium Italic");
-        success = false;
-    }
-
-    if (loadFontFromMemory(EmbeddedFonts::INTER_SEMIBOLD_ITALIC_DATA, EmbeddedFonts::INTER_SEMIBOLD_ITALIC_DATA_size,
-                           "Inter SemiBold Italic")) {
-        Fonts::INTER_SEMIBOLD_ITALIC = getFontId("Inter SemiBold Italic");
-    } else {
-        Logger::warn("Failed to load embedded Inter SemiBold Italic");
         success = false;
     }
 
@@ -531,46 +484,108 @@ bool loadFonts() {
         success = false;
     }
 
-    if (loadFontFromMemory(EmbeddedFonts::INTER_EXTRA_BOLD_ITALIC_DATA,
-                           EmbeddedFonts::INTER_EXTRA_BOLD_ITALIC_DATA_size, "Inter ExtraBold Italic")) {
-        Fonts::INTER_EXTRA_BOLD_ITALIC = getFontId("Inter ExtraBold Italic");
-    } else {
-        Logger::warn("Failed to load embedded Inter Extra Bold Italic");
-        success = false;
-    }
+    if (loadAllFonts) {
+        if (loadFontFromMemory(EmbeddedFonts::INTER_THIN_DATA, EmbeddedFonts::INTER_THIN_DATA_size, "Inter Thin")) {
+            Fonts::INTER_THIN = getFontId("Inter Thin");
+        } else {
+            Logger::warn("Failed to load embedded Inter Thin");
+            success = false;
+        }
 
-    if (loadFontFromMemory(EmbeddedFonts::INTER_BLACK_ITALIC_DATA, EmbeddedFonts::INTER_BLACK_ITALIC_DATA_size,
-                           "Inter Black Italic")) {
-        Fonts::INTER_BLACK_ITALIC = getFontId("Inter Black Italic");
-    } else {
-        Logger::warn("Failed to load embedded Inter Black Italic");
-        success = false;
+        if (loadFontFromMemory(EmbeddedFonts::INTER_EXTRA_LIGHT_DATA, EmbeddedFonts::INTER_EXTRA_LIGHT_DATA_size,
+                               "Inter ExtraLight")) {
+            Fonts::INTER_EXTRA_LIGHT = getFontId("Inter ExtraLight");
+        } else {
+            Logger::warn("Failed to load embedded Inter ExtraLight");
+            success = false;
+        }
+
+        if (loadFontFromMemory(EmbeddedFonts::INTER_LIGHT_DATA, EmbeddedFonts::INTER_LIGHT_DATA_size, "Inter Light")) {
+            Fonts::INTER_LIGHT = getFontId("Inter Light");
+        } else {
+            Logger::warn("Failed to load embedded Inter Light");
+            success = false;
+        }
+
+        if (loadFontFromMemory(EmbeddedFonts::INTER_EXTRA_BOLD_DATA, EmbeddedFonts::INTER_EXTRA_BOLD_DATA_size,
+                               "Inter ExtraBold")) {
+            Fonts::INTER_EXTRA_BOLD = getFontId("Inter ExtraBold");
+            Logger::info("INTER_EXTRA_BOLD assigned font ID: " + std::to_string(Fonts::INTER_EXTRA_BOLD));
+        } else {
+            Logger::warn("Failed to load embedded Inter ExtraBold");
+            success = false;
+        }
+
+        if (loadFontFromMemory(EmbeddedFonts::INTER_BLACK_DATA, EmbeddedFonts::INTER_BLACK_DATA_size, "Inter Black")) {
+            Fonts::INTER_BLACK = getFontId("Inter Black");
+        } else {
+            Logger::warn("Failed to load embedded Inter Black");
+            success = false;
+        }
+
+        if (loadFontFromMemory(EmbeddedFonts::INTER_THIN_ITALIC_DATA, EmbeddedFonts::INTER_THIN_ITALIC_DATA_size,
+                               "Inter Thin Italic")) {
+            Fonts::INTER_THIN_ITALIC = getFontId("Inter Thin Italic");
+        } else {
+            Logger::warn("Failed to load embedded Inter Thin Italic");
+            success = false;
+        }
+
+        if (loadFontFromMemory(EmbeddedFonts::INTER_EXTRA_LIGHT_ITALIC_DATA,
+                               EmbeddedFonts::INTER_EXTRA_LIGHT_ITALIC_DATA_size, "Inter ExtraLight Italic")) {
+            Fonts::INTER_EXTRA_LIGHT_ITALIC = getFontId("Inter ExtraLight Italic");
+        } else {
+            Logger::warn("Failed to load embedded Inter Extra Light Italic");
+            success = false;
+        }
+
+        if (loadFontFromMemory(EmbeddedFonts::INTER_LIGHT_ITALIC_DATA, EmbeddedFonts::INTER_LIGHT_ITALIC_DATA_size,
+                               "Inter Light Italic")) {
+            Fonts::INTER_LIGHT_ITALIC = getFontId("Inter Light Italic");
+        } else {
+            Logger::warn("Failed to load embedded Inter Light Italic");
+            success = false;
+        }
+
+        if (loadFontFromMemory(EmbeddedFonts::INTER_MEDIUM_ITALIC_DATA, EmbeddedFonts::INTER_MEDIUM_ITALIC_DATA_size,
+                               "Inter Medium Italic")) {
+            Fonts::INTER_MEDIUM_ITALIC = getFontId("Inter Medium Italic");
+        } else {
+            Logger::warn("Failed to load embedded Inter Medium Italic");
+            success = false;
+        }
+
+        if (loadFontFromMemory(EmbeddedFonts::INTER_SEMIBOLD_ITALIC_DATA,
+                               EmbeddedFonts::INTER_SEMIBOLD_ITALIC_DATA_size, "Inter SemiBold Italic")) {
+            Fonts::INTER_SEMIBOLD_ITALIC = getFontId("Inter SemiBold Italic");
+        } else {
+            Logger::warn("Failed to load embedded Inter SemiBold Italic");
+            success = false;
+        }
+
+        if (loadFontFromMemory(EmbeddedFonts::INTER_EXTRA_BOLD_ITALIC_DATA,
+                               EmbeddedFonts::INTER_EXTRA_BOLD_ITALIC_DATA_size, "Inter ExtraBold Italic")) {
+            Fonts::INTER_EXTRA_BOLD_ITALIC = getFontId("Inter ExtraBold Italic");
+        } else {
+            Logger::warn("Failed to load embedded Inter Extra Bold Italic");
+            success = false;
+        }
+
+        if (loadFontFromMemory(EmbeddedFonts::INTER_BLACK_ITALIC_DATA, EmbeddedFonts::INTER_BLACK_ITALIC_DATA_size,
+                               "Inter Black Italic")) {
+            Fonts::INTER_BLACK_ITALIC = getFontId("Inter Black Italic");
+        } else {
+            Logger::warn("Failed to load embedded Inter Black Italic");
+            success = false;
+        }
     }
 
 #else
     Logger::info("Loading fonts from files...");
+    if (!loadAllFonts) {
+        Logger::info("Loading core font weights only (set DISCOVE_LOAD_ALL_FONTS=1 to load all weights).");
+    }
     std::string fontDir = "assets/fonts/inter/";
-
-    if (loadFont(fontDir + "100.ttf", "Inter Thin")) {
-        Fonts::INTER_THIN = getFontId("Inter Thin");
-    } else {
-        Logger::warn("Failed to load Inter Thin");
-        success = false;
-    }
-
-    if (loadFont(fontDir + "200.ttf", "Inter ExtraLight")) {
-        Fonts::INTER_EXTRA_LIGHT = getFontId("Inter ExtraLight");
-    } else {
-        Logger::warn("Failed to load Inter ExtraLight");
-        success = false;
-    }
-
-    if (loadFont(fontDir + "300.ttf", "Inter Light")) {
-        Fonts::INTER_LIGHT = getFontId("Inter Light");
-    } else {
-        Logger::warn("Failed to load Inter Light");
-        success = false;
-    }
 
     if (loadFont(fontDir + "400.ttf", "Inter")) {
         Fonts::INTER_REGULAR = getFontId("Inter");
@@ -600,59 +615,10 @@ bool loadFonts() {
         success = false;
     }
 
-    if (loadFont(fontDir + "800.ttf", "Inter ExtraBold")) {
-        Fonts::INTER_EXTRA_BOLD = getFontId("Inter ExtraBold");
-    } else {
-        Logger::warn("Failed to load Inter ExtraBold");
-        success = false;
-    }
-
-    if (loadFont(fontDir + "900.ttf", "Inter Black")) {
-        Fonts::INTER_BLACK = getFontId("Inter Black");
-    } else {
-        Logger::warn("Failed to load Inter Black");
-        success = false;
-    }
-
-    if (loadFont(fontDir + "100italic.ttf", "Inter Thin Italic")) {
-        Fonts::INTER_THIN_ITALIC = getFontId("Inter Thin Italic");
-    } else {
-        Logger::warn("Failed to load Inter Thin Italic");
-        success = false;
-    }
-
-    if (loadFont(fontDir + "200italic.ttf", "Inter ExtraLight Italic")) {
-        Fonts::INTER_EXTRA_LIGHT_ITALIC = getFontId("Inter ExtraLight Italic");
-    } else {
-        Logger::warn("Failed to load Inter Extra Light Italic");
-        success = false;
-    }
-
-    if (loadFont(fontDir + "300italic.ttf", "Inter Light Italic")) {
-        Fonts::INTER_LIGHT_ITALIC = getFontId("Inter Light Italic");
-    } else {
-        Logger::warn("Failed to load Inter Light Italic");
-        success = false;
-    }
-
     if (loadFont(fontDir + "400italic.ttf", "Inter Italic")) {
         Fonts::INTER_REGULAR_ITALIC = getFontId("Inter Italic");
     } else {
         Logger::warn("Failed to load Inter Regular Italic");
-        success = false;
-    }
-
-    if (loadFont(fontDir + "500italic.ttf", "Inter Medium Italic")) {
-        Fonts::INTER_MEDIUM_ITALIC = getFontId("Inter Medium Italic");
-    } else {
-        Logger::warn("Failed to load Inter Medium Italic");
-        success = false;
-    }
-
-    if (loadFont(fontDir + "600italic.ttf", "Inter SemiBold Italic")) {
-        Fonts::INTER_SEMIBOLD_ITALIC = getFontId("Inter SemiBold Italic");
-    } else {
-        Logger::warn("Failed to load Inter SemiBold Italic");
         success = false;
     }
 
@@ -663,18 +629,90 @@ bool loadFonts() {
         success = false;
     }
 
-    if (loadFont(fontDir + "800italic.ttf", "Inter ExtraBold Italic")) {
-        Fonts::INTER_EXTRA_BOLD_ITALIC = getFontId("Inter ExtraBold Italic");
-    } else {
-        Logger::warn("Failed to load Inter Extra Bold Italic");
-        success = false;
-    }
+    if (loadAllFonts) {
+        if (loadFont(fontDir + "100.ttf", "Inter Thin")) {
+            Fonts::INTER_THIN = getFontId("Inter Thin");
+        } else {
+            Logger::warn("Failed to load Inter Thin");
+            success = false;
+        }
 
-    if (loadFont(fontDir + "900italic.ttf", "Inter Black Italic")) {
-        Fonts::INTER_BLACK_ITALIC = getFontId("Inter Black Italic");
-    } else {
-        Logger::warn("Failed to load Inter Black Italic");
-        success = false;
+        if (loadFont(fontDir + "200.ttf", "Inter ExtraLight")) {
+            Fonts::INTER_EXTRA_LIGHT = getFontId("Inter ExtraLight");
+        } else {
+            Logger::warn("Failed to load Inter ExtraLight");
+            success = false;
+        }
+
+        if (loadFont(fontDir + "300.ttf", "Inter Light")) {
+            Fonts::INTER_LIGHT = getFontId("Inter Light");
+        } else {
+            Logger::warn("Failed to load Inter Light");
+            success = false;
+        }
+
+        if (loadFont(fontDir + "800.ttf", "Inter ExtraBold")) {
+            Fonts::INTER_EXTRA_BOLD = getFontId("Inter ExtraBold");
+        } else {
+            Logger::warn("Failed to load Inter ExtraBold");
+            success = false;
+        }
+
+        if (loadFont(fontDir + "900.ttf", "Inter Black")) {
+            Fonts::INTER_BLACK = getFontId("Inter Black");
+        } else {
+            Logger::warn("Failed to load Inter Black");
+            success = false;
+        }
+
+        if (loadFont(fontDir + "100italic.ttf", "Inter Thin Italic")) {
+            Fonts::INTER_THIN_ITALIC = getFontId("Inter Thin Italic");
+        } else {
+            Logger::warn("Failed to load Inter Thin Italic");
+            success = false;
+        }
+
+        if (loadFont(fontDir + "200italic.ttf", "Inter ExtraLight Italic")) {
+            Fonts::INTER_EXTRA_LIGHT_ITALIC = getFontId("Inter ExtraLight Italic");
+        } else {
+            Logger::warn("Failed to load Inter Extra Light Italic");
+            success = false;
+        }
+
+        if (loadFont(fontDir + "300italic.ttf", "Inter Light Italic")) {
+            Fonts::INTER_LIGHT_ITALIC = getFontId("Inter Light Italic");
+        } else {
+            Logger::warn("Failed to load Inter Light Italic");
+            success = false;
+        }
+
+        if (loadFont(fontDir + "500italic.ttf", "Inter Medium Italic")) {
+            Fonts::INTER_MEDIUM_ITALIC = getFontId("Inter Medium Italic");
+        } else {
+            Logger::warn("Failed to load Inter Medium Italic");
+            success = false;
+        }
+
+        if (loadFont(fontDir + "600italic.ttf", "Inter SemiBold Italic")) {
+            Fonts::INTER_SEMIBOLD_ITALIC = getFontId("Inter SemiBold Italic");
+        } else {
+            Logger::warn("Failed to load Inter SemiBold Italic");
+            success = false;
+        }
+
+        if (loadFont(fontDir + "800italic.ttf", "Inter ExtraBold Italic")) {
+            Fonts::INTER_EXTRA_BOLD_ITALIC = getFontId("Inter ExtraBold Italic");
+        } else {
+            Logger::warn("Failed to load Inter Extra Bold Italic");
+            success = false;
+        }
+
+        if (loadFont(fontDir + "900italic.ttf", "Inter Black Italic")) {
+            Fonts::INTER_BLACK_ITALIC = getFontId("Inter Black Italic");
+        } else {
+            Logger::warn("Failed to load Inter Black Italic");
+            success = false;
+        }
     }
 
     Logger::info("Notifying Windows of font changes...");

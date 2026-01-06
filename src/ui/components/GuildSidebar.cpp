@@ -128,10 +128,17 @@ GuildSidebar::GuildSidebar(int x, int y, int w, int h, const char *label) : Fl_G
     clip_children(1);
     end();
 
+    m_isAlive = std::make_shared<bool>(true);
+
     m_storeListenerId = Store::get().subscribe<std::vector<ChannelSignature>>(
-        [this](const AppState &state) { return buildChannelSignature(state, m_guildId); },
-        [this](const std::vector<ChannelSignature> &) {
-            if (m_guildId.empty()) {
+        [this, alive = m_isAlive](const AppState &state) {
+            if (!alive || !*alive || m_guildId.empty()) {
+                return std::vector<ChannelSignature>{};
+            }
+            return buildChannelSignature(state, m_guildId);
+        },
+        [this, alive = m_isAlive](const std::vector<ChannelSignature> &) {
+            if (!alive || !*alive || m_guildId.empty()) {
                 return;
             }
             Fl::lock();
@@ -155,6 +162,9 @@ GuildSidebar::GuildSidebar(int x, int y, int w, int h, const char *label) : Fl_G
 }
 
 GuildSidebar::~GuildSidebar() {
+    if (m_isAlive) {
+        *m_isAlive = false;
+    }
     stopBannerAnimation();
     if (m_storeListenerId) {
         Store::get().unsubscribe(m_storeListenerId);

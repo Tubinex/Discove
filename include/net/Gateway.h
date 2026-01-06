@@ -142,6 +142,7 @@ class Gateway {
     void handleMessageReactionRemoveAll(const Json &data);
     void handleMessageReactionRemoveEmoji(const Json &data);
     void handleChannelUpdate(const Json &data);
+    void handlePresenceUpdate(const Json &data);
     void handleUserSettingsProtoUpdate(const Json &data);
 
     void handleHello(const Json &data);
