@@ -8,6 +8,7 @@
 #include "ui/LayoutConstants.h"
 #include "ui/RoundedWidget.h"
 #include "ui/Theme.h"
+#include "ui/VirtualScroll.h"
 #include "utils/CDN.h"
 #include "utils/Fonts.h"
 #include "utils/Images.h"
@@ -73,12 +74,28 @@ void GuildSidebar::draw() {
 
     fl_push_clip(x(), y() + headerHeight, w(), h() - headerHeight);
 
+    constexpr int kRenderPadding = 200;
+    int viewTop = y() + headerHeight;
+    int viewBottom = y() + h();
+    int renderTop = viewTop - kRenderPadding;
+    int renderBottom = viewBottom + kRenderPadding;
+
     int currentY = y() + headerHeight - m_scrollOffset;
 
     currentY += 16;
 
     for (auto &channel : m_uncategorizedChannels) {
         channel.yPos = currentY;
+
+        if (currentY + CHANNEL_HEIGHT < renderTop) {
+            currentY += CHANNEL_HEIGHT;
+            continue;
+        }
+
+        if (currentY > renderBottom) {
+            break;
+        }
+
         bool selected = (channel.id == m_selectedChannelId);
         bool hovered = (m_hoveredChannelIndex == static_cast<int>(&channel - &m_uncategorizedChannels[0]) &&
                         m_hoveredCategoryId.empty());
@@ -93,6 +110,22 @@ void GuildSidebar::draw() {
     for (auto &category : m_categories) {
         category.yPos = currentY;
         int channelCount = static_cast<int>(category.channels.size());
+
+        int categoryTotalHeight = CATEGORY_HEIGHT;
+        if (!category.collapsed) {
+            categoryTotalHeight += static_cast<int>(category.channels.size()) * CHANNEL_HEIGHT;
+        }
+        categoryTotalHeight += 16;
+
+        if (currentY + categoryTotalHeight < renderTop) {
+            currentY += categoryTotalHeight;
+            continue;
+        }
+
+        if (currentY > renderBottom) {
+            break;
+        }
+
         bool categoryHovered = (m_hoveredCategoryId == category.id && m_hoveredChannelIndex == -1);
         drawChannelCategory(category.name.c_str(), currentY, category.collapsed, channelCount, categoryHovered);
 
@@ -100,6 +133,15 @@ void GuildSidebar::draw() {
             for (size_t i = 0; i < category.channels.size(); ++i) {
                 auto &channel = category.channels[i];
                 channel.yPos = currentY;
+
+                if (currentY + CHANNEL_HEIGHT < renderTop) {
+                    currentY += CHANNEL_HEIGHT;
+                    continue;
+                }
+
+                if (currentY > renderBottom) {
+                    break;
+                }
 
                 bool selected = (channel.id == m_selectedChannelId);
                 bool hovered = (m_hoveredChannelIndex == static_cast<int>(i) && m_hoveredCategoryId == category.id);

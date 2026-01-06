@@ -19,7 +19,11 @@ std::optional<std::chrono::system_clock::time_point> parseISO8601(const std::str
         return std::nullopt;
     }
 
-    auto tp = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+#ifdef _WIN32
+    auto tp = std::chrono::system_clock::from_time_t(_mkgmtime(&tm));
+#else
+    auto tp = std::chrono::system_clock::from_time_t(timegm(&tm));
+#endif
     if (ss.peek() == '.') {
         ss.ignore();
         std::string fractionalStr;

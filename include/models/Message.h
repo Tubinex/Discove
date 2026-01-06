@@ -9,6 +9,7 @@
 
 #include "models/Attachment.h"
 #include "models/Embed.h"
+#include "models/Reaction.h"
 
 /**
  * @brief Discord message types
@@ -118,6 +119,7 @@ class Message {
     std::vector<std::string> mentionRoleIds;
     std::vector<Attachment> attachments;
     std::vector<Embed> embeds;
+    std::vector<Reaction> reactions;
     std::optional<std::string> nonce;
     bool pinned = false;
     std::optional<std::string> webhookId;

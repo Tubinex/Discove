@@ -235,6 +235,33 @@ int Database::insertMessages(const std::vector<Message> &messages) {
     return successCount;
 }
 
+bool Database::updateMessage(const Message &msg) {
+    return insertMessage(msg);
+}
+
+bool Database::deleteMessage(const std::string &messageId) {
+    std::scoped_lock lock(m_mutex);
+
+    if (!m_db) {
+        return false;
+    }
+
+    const char *sql = "DELETE FROM messages WHERE id = ?";
+
+    sqlite3_stmt *stmt = prepare(sql);
+    if (!stmt) {
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, messageId.c_str(), -1, SQLITE_TRANSIENT);
+
+    int result = sqlite3_step(stmt);
+    bool success = (result == SQLITE_DONE);
+
+    sqlite3_finalize(stmt);
+    return success;
+}
+
 bool Database::bindMessageToStatement(sqlite3_stmt *stmt, const Message &msg) {
     int idx = 1;
 

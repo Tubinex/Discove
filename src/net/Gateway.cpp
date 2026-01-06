@@ -317,6 +317,15 @@ void Gateway::receive(const std::string &text) {
                 {"READY", [](Gateway *gw, const Json &data) { gw->handleReady(data); }},
                 {"READY_SUPPLEMENTAL", [](Gateway *gw, const Json &data) { gw->handleReadySupplemental(data); }},
                 {"MESSAGE_CREATE", [](Gateway *gw, const Json &data) { gw->handleMessageCreate(data); }},
+                {"MESSAGE_UPDATE", [](Gateway *gw, const Json &data) { gw->handleMessageUpdate(data); }},
+                {"MESSAGE_DELETE", [](Gateway *gw, const Json &data) { gw->handleMessageDelete(data); }},
+                {"MESSAGE_REACTION_ADD", [](Gateway *gw, const Json &data) { gw->handleMessageReactionAdd(data); }},
+                {"MESSAGE_REACTION_REMOVE",
+                 [](Gateway *gw, const Json &data) { gw->handleMessageReactionRemove(data); }},
+                {"MESSAGE_REACTION_REMOVE_ALL",
+                 [](Gateway *gw, const Json &data) { gw->handleMessageReactionRemoveAll(data); }},
+                {"MESSAGE_REACTION_REMOVE_EMOJI",
+                 [](Gateway *gw, const Json &data) { gw->handleMessageReactionRemoveEmoji(data); }},
                 {"USER_SETTINGS_PROTO_UPDATE",
                  [](Gateway *gw, const Json &data) { gw->handleUserSettingsProtoUpdate(data); }},
                 {"RESUMED", [](Gateway *, const Json &) { Logger::info("Session successfully resumed"); }},
@@ -827,6 +836,335 @@ void Gateway::handleMessageCreate(const Json &data) {
         Logger::debug("Stored message " + message.id + " in channel " + message.channelId);
     } catch (const std::exception &e) {
         Logger::error("Failed to handle MESSAGE_CREATE: " + std::string(e.what()));
+    }
+}
+
+void Gateway::handleMessageUpdate(const Json &data) {
+    try {
+        if (!data.contains("id") || !data["id"].is_string()) {
+            Logger::warn("MESSAGE_UPDATE missing id field");
+            return;
+        }
+
+        std::string messageId = data["id"].get<std::string>();
+        std::string channelId;
+
+        if (data.contains("channel_id") && data["channel_id"].is_string()) {
+            channelId = data["channel_id"].get<std::string>();
+        } else {
+            Logger::warn("MESSAGE_UPDATE missing channel_id field");
+            return;
+        }
+
+        Store::get().update([&](AppState &state) {
+            auto &messages = state.channelMessages[channelId];
+            auto it =
+                std::find_if(messages.begin(), messages.end(), [&](const Message &m) { return m.id == messageId; });
+
+            if (it != messages.end()) {
+                if (data.contains("content") && data["content"].is_string()) {
+                    it->content = data["content"].get<std::string>();
+                }
+
+                if (data.contains("edited_timestamp") && data["edited_timestamp"].is_string()) {
+                    it->editedTimestamp = std::chrono::system_clock::now(); // Simplified
+                }
+
+                if (data.contains("attachments") && data["attachments"].is_array()) {
+                    it->attachments.clear();
+                    for (const auto &attachmentJson : data["attachments"]) {
+                        it->attachments.push_back(Attachment::fromJson(attachmentJson));
+                    }
+                }
+
+                if (data.contains("embeds") && data["embeds"].is_array()) {
+                    it->embeds.clear();
+                    for (const auto &embedJson : data["embeds"]) {
+                        it->embeds.push_back(Embed::fromJson(embedJson));
+                    }
+                }
+
+                if (data.contains("reactions") && data["reactions"].is_array()) {
+                    it->reactions.clear();
+                    for (const auto &reactionJson : data["reactions"]) {
+                        it->reactions.push_back(Reaction::fromJson(reactionJson));
+                    }
+                }
+
+                Data::Database::get().updateMessage(*it);
+                Logger::debug("Updated message " + messageId + " in channel " + channelId);
+            }
+        });
+    } catch (const std::exception &e) {
+        Logger::error("Failed to handle MESSAGE_UPDATE: " + std::string(e.what()));
+    }
+}
+
+void Gateway::handleMessageDelete(const Json &data) {
+    try {
+        if (!data.contains("id") || !data["id"].is_string()) {
+            Logger::warn("MESSAGE_DELETE missing id field");
+            return;
+        }
+
+        std::string messageId = data["id"].get<std::string>();
+        std::string channelId;
+
+        if (data.contains("channel_id") && data["channel_id"].is_string()) {
+            channelId = data["channel_id"].get<std::string>();
+        } else {
+            Logger::warn("MESSAGE_DELETE missing channel_id field");
+            return;
+        }
+
+        Store::get().update([&](AppState &state) {
+            auto &messages = state.channelMessages[channelId];
+            auto it =
+                std::find_if(messages.begin(), messages.end(), [&](const Message &m) { return m.id == messageId; });
+
+            if (it != messages.end()) {
+                messages.erase(it);
+                Logger::debug("Deleted message " + messageId + " from channel " + channelId);
+            }
+        });
+
+        Data::Database::get().deleteMessage(messageId);
+    } catch (const std::exception &e) {
+        Logger::error("Failed to handle MESSAGE_DELETE: " + std::string(e.what()));
+    }
+}
+
+void Gateway::handleMessageReactionAdd(const Json &data) {
+    try {
+        if (!data.contains("message_id") || !data["message_id"].is_string()) {
+            Logger::warn("MESSAGE_REACTION_ADD missing message_id field");
+            return;
+        }
+
+        std::string messageId = data["message_id"].get<std::string>();
+        std::string channelId;
+
+        if (data.contains("channel_id") && data["channel_id"].is_string()) {
+            channelId = data["channel_id"].get<std::string>();
+        } else {
+            Logger::warn("MESSAGE_REACTION_ADD missing channel_id field");
+            return;
+        }
+
+        if (!data.contains("emoji") || !data["emoji"].is_object()) {
+            Logger::warn("MESSAGE_REACTION_ADD missing emoji field");
+            return;
+        }
+
+        const auto &emojiData = data["emoji"];
+        std::string emojiId;
+        std::string emojiName;
+        bool emojiAnimated = false;
+
+        if (emojiData.contains("id") && !emojiData["id"].is_null()) {
+            emojiId = emojiData["id"].get<std::string>();
+        }
+        if (emojiData.contains("name") && !emojiData["name"].is_null()) {
+            emojiName = emojiData["name"].get<std::string>();
+        }
+        if (emojiData.contains("animated") && !emojiData["animated"].is_null()) {
+            emojiAnimated = emojiData["animated"].get<bool>();
+        }
+
+        bool isMe = false;
+        if (data.contains("user_id") && data["user_id"].is_string()) {
+            std::string userId = data["user_id"].get<std::string>();
+
+            AppState snapshot = Store::get().snapshot();
+            if (snapshot.currentUser.has_value() && snapshot.currentUser->id == userId) {
+                isMe = true;
+            }
+        }
+
+        Store::get().update([&](AppState &state) {
+            auto &messages = state.channelMessages[channelId];
+            auto it =
+                std::find_if(messages.begin(), messages.end(), [&](const Message &m) { return m.id == messageId; });
+
+            if (it != messages.end()) {
+                auto reactionIt = std::find_if(it->reactions.begin(), it->reactions.end(), [&](const Reaction &r) {
+                    return r.emojiId == emojiId && r.emojiName == emojiName;
+                });
+
+                if (reactionIt != it->reactions.end()) {
+                    reactionIt->count++;
+                    if (isMe) {
+                        reactionIt->me = true;
+                    }
+                } else {
+                    Reaction newReaction;
+                    newReaction.emojiId = emojiId;
+                    newReaction.emojiName = emojiName;
+                    newReaction.emojiAnimated = emojiAnimated;
+                    newReaction.count = 1;
+                    newReaction.me = isMe;
+                    it->reactions.push_back(newReaction);
+                }
+
+                Data::Database::get().updateMessage(*it);
+                Logger::debug("Added reaction to message " + messageId + " in channel " + channelId);
+            }
+        });
+    } catch (const std::exception &e) {
+        Logger::error("Failed to handle MESSAGE_REACTION_ADD: " + std::string(e.what()));
+    }
+}
+
+void Gateway::handleMessageReactionRemove(const Json &data) {
+    try {
+        if (!data.contains("message_id") || !data["message_id"].is_string()) {
+            Logger::warn("MESSAGE_REACTION_REMOVE missing message_id field");
+            return;
+        }
+
+        std::string messageId = data["message_id"].get<std::string>();
+        std::string channelId;
+
+        if (data.contains("channel_id") && data["channel_id"].is_string()) {
+            channelId = data["channel_id"].get<std::string>();
+        } else {
+            Logger::warn("MESSAGE_REACTION_REMOVE missing channel_id field");
+            return;
+        }
+
+        if (!data.contains("emoji") || !data["emoji"].is_object()) {
+            Logger::warn("MESSAGE_REACTION_REMOVE missing emoji field");
+            return;
+        }
+
+        const auto &emojiData = data["emoji"];
+        std::string emojiId;
+        std::string emojiName;
+
+        if (emojiData.contains("id") && !emojiData["id"].is_null()) {
+            emojiId = emojiData["id"].get<std::string>();
+        }
+        if (emojiData.contains("name") && !emojiData["name"].is_null()) {
+            emojiName = emojiData["name"].get<std::string>();
+        }
+
+        Store::get().update([&](AppState &state) {
+            auto &messages = state.channelMessages[channelId];
+            auto it =
+                std::find_if(messages.begin(), messages.end(), [&](const Message &m) { return m.id == messageId; });
+
+            if (it != messages.end()) {
+                auto reactionIt = std::find_if(it->reactions.begin(), it->reactions.end(), [&](const Reaction &r) {
+                    return r.emojiId == emojiId && r.emojiName == emojiName;
+                });
+
+                if (reactionIt != it->reactions.end()) {
+                    reactionIt->count--;
+                    if (reactionIt->count <= 0) {
+                        it->reactions.erase(reactionIt);
+                    }
+
+                    Data::Database::get().updateMessage(*it);
+                    Logger::debug("Removed reaction from message " + messageId + " in channel " + channelId);
+                } else {
+                    Logger::warn("MESSAGE_REACTION_REMOVE for unknown reaction on message: " + messageId);
+                }
+            }
+        });
+    } catch (const std::exception &e) {
+        Logger::error("Failed to handle MESSAGE_REACTION_REMOVE: " + std::string(e.what()));
+    }
+}
+
+void Gateway::handleMessageReactionRemoveAll(const Json &data) {
+    try {
+        if (!data.contains("message_id") || !data["message_id"].is_string()) {
+            Logger::warn("MESSAGE_REACTION_REMOVE_ALL missing message_id field");
+            return;
+        }
+
+        std::string messageId = data["message_id"].get<std::string>();
+        std::string channelId;
+
+        if (data.contains("channel_id") && data["channel_id"].is_string()) {
+            channelId = data["channel_id"].get<std::string>();
+        } else {
+            Logger::warn("MESSAGE_REACTION_REMOVE_ALL missing channel_id field");
+            return;
+        }
+
+        Store::get().update([&](AppState &state) {
+            auto &messages = state.channelMessages[channelId];
+            auto it =
+                std::find_if(messages.begin(), messages.end(), [&](const Message &m) { return m.id == messageId; });
+
+            if (it != messages.end()) {
+                it->reactions.clear();
+
+                Data::Database::get().updateMessage(*it);
+                Logger::debug("Removed all reactions from message " + messageId + " in channel " + channelId);
+            }
+        });
+    } catch (const std::exception &e) {
+        Logger::error("Failed to handle MESSAGE_REACTION_REMOVE_ALL: " + std::string(e.what()));
+    }
+}
+
+void Gateway::handleMessageReactionRemoveEmoji(const Json &data) {
+    try {
+        if (!data.contains("message_id") || !data["message_id"].is_string()) {
+            Logger::warn("MESSAGE_REACTION_REMOVE_EMOJI missing message_id field");
+            return;
+        }
+
+        std::string messageId = data["message_id"].get<std::string>();
+        std::string channelId;
+
+        if (data.contains("channel_id") && data["channel_id"].is_string()) {
+            channelId = data["channel_id"].get<std::string>();
+        } else {
+            Logger::warn("MESSAGE_REACTION_REMOVE_EMOJI missing channel_id field");
+            return;
+        }
+
+        if (!data.contains("emoji") || !data["emoji"].is_object()) {
+            Logger::warn("MESSAGE_REACTION_REMOVE_EMOJI missing emoji field");
+            return;
+        }
+
+        const auto &emojiData = data["emoji"];
+        std::string emojiId;
+        std::string emojiName;
+
+        if (emojiData.contains("id") && !emojiData["id"].is_null()) {
+            emojiId = emojiData["id"].get<std::string>();
+        }
+        if (emojiData.contains("name") && !emojiData["name"].is_null()) {
+            emojiName = emojiData["name"].get<std::string>();
+        }
+
+        Store::get().update([&](AppState &state) {
+            auto &messages = state.channelMessages[channelId];
+            auto it =
+                std::find_if(messages.begin(), messages.end(), [&](const Message &m) { return m.id == messageId; });
+
+            if (it != messages.end()) {
+                auto reactionIt = std::find_if(it->reactions.begin(), it->reactions.end(), [&](const Reaction &r) {
+                    return r.emojiId == emojiId && r.emojiName == emojiName;
+                });
+
+                if (reactionIt != it->reactions.end()) {
+                    it->reactions.erase(reactionIt);
+
+                    Data::Database::get().updateMessage(*it);
+                    Logger::debug("Removed all " + emojiName + " reactions from message " + messageId);
+                } else {
+                    Logger::warn("MESSAGE_REACTION_REMOVE_EMOJI for unknown emoji on message: " + messageId);
+                }
+            }
+        });
+    } catch (const std::exception &e) {
+        Logger::error("Failed to handle MESSAGE_REACTION_REMOVE_EMOJI: " + std::string(e.what()));
     }
 }
 

@@ -11,8 +11,8 @@
 #include <FL/fl_draw.H>
 
 #include <algorithm>
-#include <cmath>
 #include <cctype>
+#include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <functional>
@@ -33,8 +33,8 @@ constexpr int kHeaderTopPadding = -4;
 constexpr int kTimestampBaselineAdjust = 5;
 constexpr int kHeaderToContentPadding = 6;
 constexpr int kContentBottomPadding = 8;
-constexpr int kGroupedTopPadding = 0;
-constexpr int kGroupedBottomPadding = 0;
+constexpr int kGroupedTopPadding = 3;
+constexpr int kGroupedBottomPadding = 3;
 constexpr int kLineSpacing = 4;
 constexpr int kSystemFontSize = 14;
 constexpr int kSystemLineSpacing = 2;
@@ -50,11 +50,17 @@ constexpr int kAttachmentTopPaddingNoContent = 6;
 constexpr int kAttachmentSpacing = 8;
 constexpr int kAttachmentMaxWidth = 520;
 constexpr int kAttachmentMaxHeight = 300;
-constexpr int kAttachmentFileHeight = 48;
+constexpr int kAttachmentMinSize = 20;
+constexpr int kAttachmentFileHeight = 76;
 constexpr int kAttachmentCornerRadius = 8;
-constexpr int kAttachmentFilePadding = 10;
-constexpr int kAttachmentNameFontSize = 14;
-constexpr int kAttachmentMetaFontSize = 12;
+constexpr int kAttachmentIconSize = 40;
+constexpr int kAttachmentFileMaxWidth = 460;
+constexpr int kAttachmentDownloadButtonSize = 36;
+constexpr int kAttachmentDownloadIconSize = 22;
+constexpr int kAttachmentDownloadButtonRadius = 6;
+constexpr int kAttachmentDownloadPadding = 12;
+constexpr int kAttachmentNameFontSize = 16;
+constexpr int kAttachmentMetaFontSize = 11;
 constexpr int kReplyFontSize = 12;
 constexpr int kReplyTopPadding = 2;
 constexpr int kReplyToHeaderPadding = 4;
@@ -66,6 +72,26 @@ constexpr int kReplyLineCornerSegments = 6;
 constexpr double kReplyHalfPi = 1.5707963267948966;
 constexpr int kReplyLineYOffset = -1;
 constexpr int kReplyLineThickness = 2;
+constexpr int kEmojiSize = 22;
+constexpr int kEmojiOnlySize = 48;
+constexpr int kEmojiRequestSize = 48;
+constexpr int kEmojiBaselineOffset = 3;
+constexpr int kReactionHeight = 28;
+constexpr int kReactionCornerRadius = 6;
+constexpr int kReactionEmojiSize = 16;
+constexpr int kReactionEmojiFontSize = 14;
+constexpr int kReactionFontSize = 12;
+constexpr int kReactionPaddingX = 8;
+constexpr int kReactionSpacing = 6;
+constexpr int kReactionRowSpacing = 6;
+constexpr int kReactionEmojiGap = 6;
+constexpr int kReactionTopPadding = 10;
+constexpr int kReactionTopPaddingNoContent = 8;
+constexpr int kReactionBottomPadding = 6;
+constexpr Fl_Color kReactionBg = 0x242428FF;
+constexpr Fl_Color kReactionTextColor = ThemeColors::TEXT_NORMAL;
+constexpr Fl_Color kReactionSelfBg = 0x292b50FF;
+constexpr Fl_Color kReactionSelfBorder = 0x5865f2FF;
 } // namespace
 
 namespace {
@@ -83,8 +109,10 @@ struct AnimatedAvatarState {
 std::unordered_map<std::string, AnimatedAvatarState> avatar_gif_cache;
 std::unordered_set<std::string> avatar_gif_pending;
 std::string hovered_avatar_key;
+std::string hovered_attachment_download_key;
 
 std::string buildAvatarCacheKey(const std::string &url, int size) { return url + "#" + std::to_string(size); }
+std::string buildEmojiCacheKey(const std::string &url, int size) { return url + "#" + std::to_string(size); }
 
 bool isGifUrl(const std::string &url) {
     size_t pos = url.rfind(".gif");
@@ -299,8 +327,15 @@ Fl_RGB_Image *getAvatarImage(const Message &msg, int size) {
 
 std::unordered_map<std::string, std::unique_ptr<Fl_RGB_Image>> attachment_cache;
 std::unordered_set<std::string> attachment_pending;
+std::unordered_map<std::string, std::unique_ptr<Fl_RGB_Image>> emoji_cache;
+std::unordered_set<std::string> emoji_pending;
 
 std::string getAttachmentUrl(const Attachment &attachment) {
+    if (attachment.contentType.has_value() && attachment.isImage()) {
+        if (!attachment.url.empty()) {
+            return attachment.url;
+        }
+    }
     if (!attachment.proxyUrl.empty()) {
         return attachment.proxyUrl;
     }
@@ -357,8 +392,8 @@ Fl_RGB_Image *cropAndScaleToSquare(Fl_RGB_Image *source, int size) {
 }
 
 bool isAttachmentImage(const Attachment &attachment) {
-    if (attachment.isImage()) {
-        return true;
+    if (attachment.contentType.has_value()) {
+        return attachment.isImage();
     }
     return attachment.width.has_value() && attachment.height.has_value();
 }
@@ -434,20 +469,13 @@ Fl_RGB_Image *getAttachmentImage(const Attachment &attachment, int width, int he
 std::string selectJoinMessage(const Message &msg, const std::string &username) {
     (void)username;
     static const std::vector<std::string> kTemplates = {
-        "A wild {user} appeared.",
-        "{user} just showed up!",
-        "{user} just landed.",
-        "{user} just slid into the server.",
-        "{user} is here.",
-        "{user} joined the party.",
-        "Say hi to {user}.",
-        "Good to see you, {user}.",
-        "Glad you're here, {user}.",
-        "Welcome, {user}. We hope you brought pizza.",
-        "Welcome {user}. Say hi!",
-        "Everyone welcome {user}!",
-        "Yay you made it, {user}!"
-    };
+        "A wild {user} appeared.",   "{user} just showed up!",
+        "{user} just landed.",       "{user} just slid into the server.",
+        "{user} is here.",           "{user} joined the party.",
+        "Say hi to {user}.",         "Good to see you, {user}.",
+        "Glad you're here, {user}.", "Welcome, {user}. We hope you brought pizza.",
+        "Welcome {user}. Say hi!",   "Everyone welcome {user}!",
+        "Yay you made it, {user}!"};
 
     if (kTemplates.empty()) {
         return "{user} joined the server.";
@@ -687,9 +715,7 @@ struct MarkdownRun {
     Fl_Color color = ThemeColors::TEXT_NORMAL;
 };
 
-bool isHttpUrl(const std::string &url) {
-    return url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0;
-}
+bool isHttpUrl(const std::string &url) { return url.rfind("https://", 0) == 0 || url.rfind("http://", 0) == 0; }
 
 bool isUrlStartAt(const std::string &text, size_t pos) {
     return text.compare(pos, 8, "https://") == 0 || text.compare(pos, 7, "http://") == 0;
@@ -710,6 +736,244 @@ bool isTrailingPunct(char ch) {
     default:
         return false;
     }
+}
+
+bool isAllDigits(const std::string &text) {
+    return !text.empty() &&
+           std::all_of(text.begin(), text.end(), [](unsigned char ch) { return std::isdigit(ch) != 0; });
+}
+
+std::string buildEmojiUrl(const std::string &id, bool animated) {
+    std::ostringstream out;
+    out << "https://cdn.discordapp.com/emojis/" << id << (animated ? ".gif" : ".png") << "?size=" << kEmojiRequestSize;
+    return out.str();
+}
+
+bool tryParseTimestamp(const std::string &text, size_t pos, size_t &outLength, std::string &outFormatted) {
+    if (pos >= text.size() || text[pos] != '<') {
+        return false;
+    }
+
+    size_t start = pos + 1;
+    if (start >= text.size() || text[start] != 't') {
+        return false;
+    }
+    start++;
+    if (start >= text.size() || text[start] != ':') {
+        return false;
+    }
+    start++;
+
+    size_t colonOrEnd = start;
+    while (colonOrEnd < text.size() && text[colonOrEnd] != ':' && text[colonOrEnd] != '>') {
+        colonOrEnd++;
+    }
+
+    if (colonOrEnd >= text.size()) {
+        return false;
+    }
+
+    std::string timestampStr = text.substr(start, colonOrEnd - start);
+    if (!isAllDigits(timestampStr)) {
+        return false;
+    }
+
+    char style = 'f';
+    size_t closePos = colonOrEnd;
+    if (text[colonOrEnd] == ':') {
+        size_t stylePos = colonOrEnd + 1;
+        if (stylePos < text.size() && text[stylePos] != '>') {
+            style = text[stylePos];
+            closePos = stylePos + 1;
+        }
+    }
+
+    if (closePos >= text.size() || text[closePos] != '>') {
+        return false;
+    }
+
+    try {
+        int64_t timestamp = std::stoll(timestampStr);
+        auto timePoint = std::chrono::system_clock::from_time_t(static_cast<time_t>(timestamp));
+        auto timeT = std::chrono::system_clock::to_time_t(timePoint);
+        std::tm tm;
+        localtime_s(&tm, &timeT);
+
+        auto now = std::chrono::system_clock::now();
+        auto nowT = std::chrono::system_clock::to_time_t(now);
+        std::tm nowTm;
+        localtime_s(&nowTm, &nowT);
+
+        std::ostringstream oss;
+        switch (style) {
+        case 't':
+            oss << std::put_time(&tm, "%H:%M");
+            break;
+        case 'T':
+            oss << std::put_time(&tm, "%H:%M:%S");
+            break;
+        case 'd':
+            oss << std::put_time(&tm, "%d/%m/%Y");
+            break;
+        case 'D':
+            oss << std::put_time(&tm, "%d %B %Y");
+            break;
+        case 'f':
+            oss << std::put_time(&tm, "%d %B %Y %H:%M");
+            break;
+        case 'F':
+            oss << std::put_time(&tm, "%A, %d %B %Y %H:%M");
+            break;
+        case 'R': {
+            auto diff = std::chrono::duration_cast<std::chrono::seconds>(now - timePoint).count();
+            if (diff < 0) {
+                diff = -diff;
+                if (diff < 60)
+                    oss << "in " << diff << " second" << (diff == 1 ? "" : "s");
+                else if (diff < 3600)
+                    oss << "in " << (diff / 60) << " minute" << ((diff / 60) == 1 ? "" : "s");
+                else if (diff < 86400)
+                    oss << "in " << (diff / 3600) << " hour" << ((diff / 3600) == 1 ? "" : "s");
+                else if (diff < 2592000)
+                    oss << "in " << (diff / 86400) << " day" << ((diff / 86400) == 1 ? "" : "s");
+                else if (diff < 31536000)
+                    oss << "in " << (diff / 2592000) << " month" << ((diff / 2592000) == 1 ? "" : "s");
+                else
+                    oss << "in " << (diff / 31536000) << " year" << ((diff / 31536000) == 1 ? "" : "s");
+            } else {
+                if (diff < 60)
+                    oss << diff << " second" << (diff == 1 ? "" : "s") << " ago";
+                else if (diff < 3600)
+                    oss << (diff / 60) << " minute" << ((diff / 60) == 1 ? "" : "s") << " ago";
+                else if (diff < 86400)
+                    oss << (diff / 3600) << " hour" << ((diff / 3600) == 1 ? "" : "s") << " ago";
+                else if (diff < 2592000)
+                    oss << (diff / 86400) << " day" << ((diff / 86400) == 1 ? "" : "s") << " ago";
+                else if (diff < 31536000)
+                    oss << (diff / 2592000) << " month" << ((diff / 2592000) == 1 ? "" : "s") << " ago";
+                else
+                    oss << (diff / 31536000) << " year" << ((diff / 31536000) == 1 ? "" : "s") << " ago";
+            }
+            break;
+        }
+        default:
+            oss << std::put_time(&tm, "%d %B %Y %H:%M");
+            break;
+        }
+
+        outFormatted = oss.str();
+        outLength = closePos - pos + 1;
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool tryParseMention(const std::string &text, size_t pos, size_t &outLength, std::string &outId, char &outType) {
+    if (pos >= text.size() || text[pos] != '<') {
+        return false;
+    }
+
+    size_t start = pos + 1;
+    if (start >= text.size()) {
+        return false;
+    }
+
+    char type = text[start];
+    if (type == '@') {
+        start++;
+        if (start < text.size() && (text[start] == '!' || text[start] == '&')) {
+            outType = text[start];
+            start++;
+        } else {
+            outType = '@';
+        }
+    } else if (type == '#') {
+        outType = '#';
+        start++;
+    } else {
+        return false;
+    }
+
+    size_t idEnd = text.find('>', start);
+    if (idEnd == std::string::npos) {
+        return false;
+    }
+
+    std::string id = text.substr(start, idEnd - start);
+    if (!isAllDigits(id)) {
+        return false;
+    }
+
+    outId = id;
+    outLength = idEnd - pos + 1;
+    return true;
+}
+
+bool tryParseEmoji(const std::string &text, size_t pos, size_t &outLength, std::string &outUrl) {
+    if (pos >= text.size() || text[pos] != '<') {
+        return false;
+    }
+
+    bool animated = false;
+    size_t start = pos + 1;
+    if (start < text.size() && text[start] == 'a') {
+        animated = true;
+        start++;
+    }
+    if (start >= text.size() || text[start] != ':') {
+        return false;
+    }
+
+    size_t nameStart = start + 1;
+    size_t nameEnd = text.find(':', nameStart);
+    if (nameEnd == std::string::npos) {
+        return false;
+    }
+
+    size_t idStart = nameEnd + 1;
+    size_t idEnd = text.find('>', idStart);
+    if (idEnd == std::string::npos) {
+        return false;
+    }
+
+    std::string id = text.substr(idStart, idEnd - idStart);
+    if (!isAllDigits(id)) {
+        return false;
+    }
+
+    outUrl = buildEmojiUrl(id, animated);
+    outLength = idEnd - pos + 1;
+    return true;
+}
+
+Fl_RGB_Image *getEmojiImage(const std::string &url, int size) {
+    if (url.empty() || size <= 0) {
+        return nullptr;
+    }
+
+    std::string cacheKey = buildEmojiCacheKey(url, size);
+    auto it = emoji_cache.find(cacheKey);
+    if (it != emoji_cache.end()) {
+        return it->second.get();
+    }
+
+    if (emoji_pending.find(cacheKey) == emoji_pending.end()) {
+        emoji_pending.insert(cacheKey);
+        Images::loadImageAsync(url, [cacheKey, url, size](Fl_RGB_Image *image) {
+            if (image && image->w() > 0 && image->h() > 0) {
+                Fl_Image *scaled = image->copy(size, size);
+                if (scaled) {
+                    emoji_cache[cacheKey] = std::unique_ptr<Fl_RGB_Image>(static_cast<Fl_RGB_Image *>(scaled));
+                }
+                Images::evictFromMemory(url);
+            }
+            emoji_pending.erase(cacheKey);
+            Fl::redraw();
+        });
+    }
+
+    return nullptr;
 }
 
 std::vector<LinkRun> parseLinkRuns(const std::string &text, Fl_Color baseColor, Fl_Color linkColor) {
@@ -781,8 +1045,7 @@ std::vector<LinkRun> parseLinkRuns(const std::string &text, Fl_Color baseColor, 
     return runs;
 }
 
-bool hasClosingMarker(const std::vector<LinkRun> &runs, size_t runIndex, size_t start,
-                      const std::string &marker) {
+bool hasClosingMarker(const std::vector<LinkRun> &runs, size_t runIndex, size_t start, const std::string &marker) {
     for (size_t i = runIndex; i < runs.size(); ++i) {
         const std::string &text = runs[i].text;
         size_t offset = (i == runIndex) ? start : 0;
@@ -896,10 +1159,10 @@ std::vector<MarkdownRun> parseMarkdownRuns(const std::vector<LinkRun> &runs) {
 
 Fl_Font resolveMarkdownFont(Fl_Font baseFont, bool bold, bool italic) {
     if (bold && italic) {
-        return FontLoader::Fonts::INTER_SEMIBOLD_ITALIC;
+        return FontLoader::Fonts::INTER_BOLD_ITALIC;
     }
     if (bold) {
-        return FontLoader::Fonts::INTER_SEMIBOLD;
+        return FontLoader::Fonts::INTER_BOLD;
     }
     if (italic) {
         return FontLoader::Fonts::INTER_REGULAR_ITALIC;
@@ -907,7 +1170,117 @@ Fl_Font resolveMarkdownFont(Fl_Font baseFont, bool bold, bool italic) {
     return baseFont;
 }
 
+std::vector<MessageWidget::InlineItem> tokenizeEmojiText(const std::string &text, Fl_Font font, int size,
+                                                         Fl_Color color, const std::string &linkUrl, bool underline,
+                                                         bool strikethrough, const Message *msg) {
+    std::vector<MessageWidget::InlineItem> tokens;
+    std::string current;
+    size_t i = 0;
+
+    auto flushText = [&]() {
+        if (!current.empty()) {
+            auto textTokens = tokenizeStyledText(current, font, size, color, linkUrl, underline, strikethrough);
+            tokens.insert(tokens.end(), textTokens.begin(), textTokens.end());
+            current.clear();
+        }
+    };
+
+    while (i < text.size()) {
+        size_t length = 0;
+
+        if (text.compare(i, 9, "@everyone") == 0) {
+            flushText();
+            auto mentionTokens = tokenizeStyledText("@everyone", FontLoader::Fonts::INTER_SEMIBOLD, size,
+                                                    ThemeColors::TEXT_LINK, "", false, false);
+            tokens.insert(tokens.end(), mentionTokens.begin(), mentionTokens.end());
+            i += 9;
+            continue;
+        }
+
+        if (text.compare(i, 5, "@here") == 0) {
+            flushText();
+            auto mentionTokens = tokenizeStyledText("@here", FontLoader::Fonts::INTER_SEMIBOLD, size,
+                                                    ThemeColors::TEXT_LINK, "", false, false);
+            tokens.insert(tokens.end(), mentionTokens.begin(), mentionTokens.end());
+            i += 5;
+            continue;
+        }
+
+        std::string timestampText;
+        if (tryParseTimestamp(text, i, length, timestampText)) {
+            flushText();
+            auto timestampTokens =
+                tokenizeStyledText(timestampText, font, size, ThemeColors::TEXT_LINK, "", true, false);
+            tokens.insert(tokens.end(), timestampTokens.begin(), timestampTokens.end());
+            i += length;
+            continue;
+        }
+
+        std::string mentionId;
+        char mentionType;
+        if (tryParseMention(text, i, length, mentionId, mentionType)) {
+            flushText();
+            std::string mentionText;
+            if (mentionType == '#') {
+                mentionText = "#unknown-channel";
+            } else if (mentionType == '&') {
+                mentionText = "@Unknown Role";
+                if (msg && msg->guildId.has_value()) {
+                    // TODO: Look up role name from AppState
+                }
+            } else {
+                mentionText = "@Unknown User";
+                if (msg) {
+                    for (size_t j = 0; j < msg->mentionIds.size(); ++j) {
+                        if (msg->mentionIds[j] == mentionId) {
+                            if (j < msg->mentionDisplayNames.size() && !msg->mentionDisplayNames[j].empty()) {
+                                mentionText = "@" + msg->mentionDisplayNames[j];
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            auto mentionTokens = tokenizeStyledText(mentionText, FontLoader::Fonts::INTER_SEMIBOLD, size,
+                                                    ThemeColors::TEXT_LINK, "", false, false);
+            tokens.insert(tokens.end(), mentionTokens.begin(), mentionTokens.end());
+            i += length;
+            continue;
+        }
+
+        std::string emojiUrl;
+        if (tryParseEmoji(text, i, length, emojiUrl)) {
+            flushText();
+            MessageWidget::InlineItem item;
+            item.kind = MessageWidget::InlineItem::Kind::Emoji;
+            item.emojiUrl = emojiUrl;
+            item.emojiSize = kEmojiSize;
+            item.width = kEmojiSize;
+            item.emojiCacheKey = buildEmojiCacheKey(emojiUrl, kEmojiSize);
+            tokens.push_back(std::move(item));
+            i += length;
+            continue;
+        }
+
+        current.push_back(text[i]);
+        i += 1;
+    }
+
+    flushText();
+    return tokens;
+}
+
 int drawInlineItem(const MessageWidget::InlineItem &item, int x, int baseline) {
+    if (item.kind == MessageWidget::InlineItem::Kind::Emoji) {
+        int size = item.emojiSize > 0 ? item.emojiSize : kEmojiSize;
+        int drawY = baseline - size + kEmojiBaselineOffset;
+        Fl_RGB_Image *emoji = getEmojiImage(item.emojiUrl, size);
+        if (emoji && emoji->w() > 0 && emoji->h() > 0) {
+            emoji->draw(x, drawY);
+        }
+        return size;
+    }
+
     if (item.kind != MessageWidget::InlineItem::Kind::Text || item.text.empty()) {
         return 0;
     }
@@ -989,6 +1362,20 @@ std::vector<MessageWidget::InlineItem> buildSystemTokens(const std::string &temp
 
     return tokens;
 }
+
+std::vector<MessageWidget::InlineItem> tokenizeTextWithMessage(const std::string &text, Fl_Font font, int size,
+                                                               Fl_Color color, const Message *msg) {
+    std::vector<MessageWidget::InlineItem> tokens;
+    auto runs = parseLinkRuns(text, color, ThemeColors::TEXT_LINK);
+    auto mdRuns = parseMarkdownRuns(runs);
+    for (const auto &mdRun : mdRuns) {
+        Fl_Font runFont = resolveMarkdownFont(font, mdRun.bold, mdRun.italic);
+        auto runTokens = tokenizeEmojiText(mdRun.text, runFont, size, mdRun.color, mdRun.linkUrl, mdRun.underline,
+                                           mdRun.strikethrough, msg);
+        tokens.insert(tokens.end(), runTokens.begin(), runTokens.end());
+    }
+    return tokens;
+}
 } // namespace
 
 MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWidth, bool isGrouped, bool compactBottom,
@@ -1001,10 +1388,35 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
     layout.avatarSize = kAvatarSize;
 
     auto msgTime = std::chrono::system_clock::to_time_t(msg.timestamp);
-    std::tm tmStruct;
-    localtime_s(&tmStruct, &msgTime);
+    std::tm msgTm;
+    localtime_s(&msgTm, &msgTime);
+
+    auto now = std::chrono::system_clock::now();
+    auto nowTime = std::chrono::system_clock::to_time_t(now);
+    std::tm nowTm;
+    localtime_s(&nowTm, &nowTime);
+
     std::ostringstream timeStream;
-    timeStream << std::put_time(&tmStruct, "%I:%M %p");
+    bool isToday = (msgTm.tm_year == nowTm.tm_year && msgTm.tm_mon == nowTm.tm_mon && msgTm.tm_mday == nowTm.tm_mday);
+    bool isYesterday = false;
+
+    if (!isToday) {
+        auto yesterday = now - std::chrono::hours(24);
+        auto yesterdayTime = std::chrono::system_clock::to_time_t(yesterday);
+        std::tm yesterdayTm;
+        localtime_s(&yesterdayTm, &yesterdayTime);
+        isYesterday = (msgTm.tm_year == yesterdayTm.tm_year && msgTm.tm_mon == yesterdayTm.tm_mon &&
+                       msgTm.tm_mday == yesterdayTm.tm_mday);
+    }
+
+    if (isToday) {
+        timeStream << std::put_time(&msgTm, "%I:%M %p");
+    } else if (isYesterday) {
+        timeStream << "Yesterday at " << std::put_time(&msgTm, "%I:%M %p");
+    } else {
+        timeStream << std::put_time(&msgTm, "%d/%m/%Y %I:%M %p");
+    }
+
     layout.time = timeStream.str();
 
     layout.avatarX = kLeftMargin;
@@ -1044,13 +1456,11 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
         int spaceWidth = static_cast<int>(fl_width(" "));
         int availableSnippetWidth = std::max(0, maxReplyWidth - authorWidth - spaceWidth);
         if (availableSnippetWidth > 0 && !snippet.empty()) {
-            snippet =
-                ellipsizeText(snippet, availableSnippetWidth, FontLoader::Fonts::INTER_REGULAR, kReplyFontSize);
+            snippet = ellipsizeText(snippet, availableSnippetWidth, FontLoader::Fonts::INTER_REGULAR, kReplyFontSize);
         }
 
-        layout.replyItems =
-            tokenizeStyledText(replyPreview->author, FontLoader::Fonts::INTER_SEMIBOLD, kReplyFontSize,
-                               ThemeColors::TEXT_NORMAL);
+        layout.replyItems = tokenizeStyledText(replyPreview->author, FontLoader::Fonts::INTER_SEMIBOLD, kReplyFontSize,
+                                               ThemeColors::TEXT_NORMAL);
         if (!snippet.empty()) {
             auto spacer =
                 tokenizeStyledText(" ", FontLoader::Fonts::INTER_REGULAR, kReplyFontSize, ThemeColors::TEXT_MUTED);
@@ -1077,8 +1487,7 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
         layout.timeBaseline = layout.avatarY + kHeaderTopPadding + timeAscent + kTimestampBaselineAdjust;
     }
 
-    std::vector<std::string> mentionNames =
-        msg.mentionDisplayNames.empty() ? msg.mentionIds : msg.mentionDisplayNames;
+    std::vector<std::string> mentionNames = msg.mentionDisplayNames.empty() ? msg.mentionIds : msg.mentionDisplayNames;
     int lineAscent = 0;
     int contentHeight = 0;
     int contentTop = 0;
@@ -1132,8 +1541,36 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
         layout.systemIconX = kLeftMargin;
         layout.systemIconY = contentTop + (layout.lineHeight - kSystemIconSize) / 2;
     } else {
-        auto tokens = tokenizeText(msg.content, FontLoader::Fonts::INTER_REGULAR, kContentFontSize,
-                                   ThemeColors::TEXT_NORMAL);
+        auto tokens = tokenizeTextWithMessage(msg.content, FontLoader::Fonts::INTER_REGULAR, kContentFontSize,
+                                              ThemeColors::TEXT_NORMAL, &msg);
+        bool emojiOnly = true;
+        int maxEmojiSize = 0;
+        for (const auto &token : tokens) {
+            if (token.kind == InlineItem::Kind::Emoji) {
+                maxEmojiSize = std::max(maxEmojiSize, token.emojiSize > 0 ? token.emojiSize : kEmojiSize);
+                continue;
+            }
+            if (token.kind == InlineItem::Kind::LineBreak) {
+                continue;
+            }
+            if (token.kind == InlineItem::Kind::Text && token.text.find_first_not_of(" \t\r\n") == std::string::npos) {
+                continue;
+            }
+            emojiOnly = false;
+            break;
+        }
+
+        if (emojiOnly && maxEmojiSize > 0) {
+            for (auto &token : tokens) {
+                if (token.kind == InlineItem::Kind::Emoji && !token.emojiUrl.empty()) {
+                    token.emojiSize = kEmojiOnlySize;
+                    token.width = kEmojiOnlySize;
+                    token.emojiCacheKey = buildEmojiCacheKey(token.emojiUrl, kEmojiOnlySize);
+                }
+            }
+            maxEmojiSize = kEmojiOnlySize;
+        }
+
         fl_font(FontLoader::Fonts::INTER_REGULAR, kContentFontSize);
         layout.lines = wrapTokens(tokens, layout.contentWidth);
         layout.lineHeight = fl_height();
@@ -1146,6 +1583,10 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
             contentHeight = 0;
             lineAscent = 0;
         } else {
+            if (maxEmojiSize > 0) {
+                layout.lineHeight = std::max(layout.lineHeight, maxEmojiSize);
+                lineAscent = layout.lineHeight - fl_descent();
+            }
             int lineCount = layout.lines.empty() ? 1 : static_cast<int>(layout.lines.size());
             contentHeight = lineCount * layout.lineHeight + (lineCount - 1) * layout.lineSpacing;
         }
@@ -1166,13 +1607,13 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
         if (isGrouped) {
             layout.height = contentTop + contentHeight + bottomPadding;
         } else {
-            layout.height =
-                std::max(layout.avatarY + layout.avatarSize, contentTop + contentHeight + bottomPadding);
+            layout.height = std::max(layout.avatarY + layout.avatarSize, contentTop + contentHeight + bottomPadding);
         }
     }
 
     layout.contentTop = contentTop;
     layout.contentHeight = contentHeight;
+    int attachmentsBottomPadding = 0;
 
     if (!layout.isSystem && !msg.attachments.empty()) {
         int maxWidth = std::min(layout.contentWidth, kAttachmentMaxWidth);
@@ -1186,10 +1627,14 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
                     MessageWidget::AttachmentLayout attachmentLayout;
                     attachmentLayout.isImage = false;
                     attachmentLayout.squareCrop = false;
-                    attachmentLayout.width = std::min(maxWidth, 420);
+                    attachmentLayout.width = std::min(maxWidth, kAttachmentFileMaxWidth);
                     attachmentLayout.height = kAttachmentFileHeight;
                     attachmentLayout.xOffset = 0;
                     attachmentLayout.yOffset = cursorY;
+                    attachmentLayout.downloadSize = kAttachmentDownloadButtonSize;
+                    attachmentLayout.downloadXOffset = std::max(
+                        0, attachmentLayout.width - kAttachmentDownloadButtonSize - kAttachmentDownloadPadding);
+                    attachmentLayout.downloadYOffset = std::max(0, (attachmentLayout.height - kAttachmentDownloadButtonSize) / 2);
                     layout.attachments.push_back(attachmentLayout);
 
                     cursorY += attachmentLayout.height + kAttachmentSpacing;
@@ -1227,26 +1672,32 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
                         int scaledH = slotWidth;
 
                         if (!attachmentLayout.squareCrop) {
-                            int naturalW = rowAttachment.width.value_or(slotWidth);
+                            int naturalW = rowAttachment.width.value_or(kAttachmentMaxWidth);
                             int naturalH = rowAttachment.height.value_or(kAttachmentMaxHeight);
                             if (naturalW <= 0) {
-                                naturalW = slotWidth;
+                                naturalW = kAttachmentMaxWidth;
                             }
                             if (naturalH <= 0) {
                                 naturalH = kAttachmentMaxHeight;
                             }
 
-                            double aspect = static_cast<double>(naturalH) / static_cast<double>(naturalW);
-                            scaledW = slotWidth;
-                            scaledH =
-                                std::max(1, static_cast<int>(std::round(static_cast<double>(scaledW) * aspect)));
+                            scaledW = std::min(naturalW, kAttachmentMaxWidth);
+                            scaledH = std::min(naturalH, kAttachmentMaxHeight);
 
-                            if (scaledH > kAttachmentMaxHeight) {
-                                double scale = static_cast<double>(kAttachmentMaxHeight) /
-                                               static_cast<double>(scaledH);
-                                scaledH = kAttachmentMaxHeight;
-                                scaledW = std::max(1, static_cast<int>(std::round(static_cast<double>(scaledW) * scale)));
+                            if (naturalW > kAttachmentMaxWidth || naturalH > kAttachmentMaxHeight) {
+                                double aspect = static_cast<double>(naturalH) / static_cast<double>(naturalW);
+                                if (naturalW > kAttachmentMaxWidth) {
+                                    scaledW = kAttachmentMaxWidth;
+                                    scaledH = static_cast<int>(std::round(static_cast<double>(scaledW) * aspect));
+                                }
+                                if (scaledH > kAttachmentMaxHeight) {
+                                    scaledH = kAttachmentMaxHeight;
+                                    scaledW = static_cast<int>(std::round(static_cast<double>(scaledH) / aspect));
+                                }
                             }
+
+                            scaledW = std::max(kAttachmentMinSize, std::min(scaledW, slotWidth));
+                            scaledH = std::max(kAttachmentMinSize, scaledH);
                         } else {
                             int squareSize = std::min(slotWidth, kAttachmentMaxHeight);
                             scaledW = squareSize;
@@ -1288,14 +1739,94 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
             }
             layout.attachmentsTopPadding =
                 (layout.contentHeight > 0) ? kAttachmentTopPadding : kAttachmentTopPaddingNoContent;
-            int attachmentsHeight = layout.attachmentsTopPadding + cursorY;
+            layout.attachmentsHeight = layout.attachmentsTopPadding + cursorY;
+            attachmentsBottomPadding = kContentBottomPadding;
+        }
+    }
 
-            if (layout.grouped) {
-                layout.height = layout.contentTop + layout.contentHeight + attachmentsHeight + bottomPadding;
-            } else {
-                layout.height = std::max(layout.avatarY + layout.avatarSize,
-                                         layout.contentTop + layout.contentHeight + attachmentsHeight + bottomPadding);
+    if (!layout.isSystem && !msg.reactions.empty()) {
+        int maxWidth = layout.contentWidth;
+        if (maxWidth > 0) {
+            int cursorX = 0;
+            int cursorY = 0;
+
+            fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kReactionFontSize);
+            fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kReactionEmojiFontSize);
+
+            for (const auto &reaction : msg.reactions) {
+                MessageWidget::ReactionLayout reactionLayout;
+                reactionLayout.me = reaction.me;
+                reactionLayout.isCustomEmoji = !reaction.emojiId.empty();
+                reactionLayout.animated = reaction.emojiAnimated;
+                reactionLayout.emojiName = reaction.emojiName;
+                reactionLayout.emojiSize = kReactionEmojiSize;
+                reactionLayout.countText = std::to_string(std::max(0, reaction.count));
+
+                int emojiWidth = kReactionEmojiSize;
+                if (reactionLayout.isCustomEmoji) {
+                    reactionLayout.emojiUrl = buildEmojiUrl(reaction.emojiId, reaction.emojiAnimated);
+                    if (!reactionLayout.emojiUrl.empty()) {
+                        reactionLayout.emojiCacheKey =
+                            buildEmojiCacheKey(reactionLayout.emojiUrl, reactionLayout.emojiSize);
+                    }
+                } else {
+                    fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kReactionEmojiFontSize);
+                    if (!reactionLayout.emojiName.empty()) {
+                        emojiWidth = static_cast<int>(fl_width(reactionLayout.emojiName.c_str()));
+                    }
+                }
+                if (emojiWidth <= 0) {
+                    emojiWidth = kReactionEmojiSize;
+                }
+                reactionLayout.emojiWidth = emojiWidth;
+
+                fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kReactionFontSize);
+                int countWidth = static_cast<int>(fl_width(reactionLayout.countText.c_str()));
+                int pillWidth = kReactionPaddingX + emojiWidth + kReactionEmojiGap + countWidth + kReactionPaddingX;
+                if (pillWidth < kReactionHeight) {
+                    pillWidth = kReactionHeight;
+                }
+
+                if (cursorX > 0 && cursorX + pillWidth > maxWidth) {
+                    cursorX = 0;
+                    cursorY += kReactionHeight + kReactionRowSpacing;
+                }
+
+                reactionLayout.width = pillWidth;
+                reactionLayout.height = kReactionHeight;
+                reactionLayout.xOffset = cursorX;
+                reactionLayout.yOffset = cursorY;
+                layout.reactions.push_back(std::move(reactionLayout));
+
+                cursorX += pillWidth + kReactionSpacing;
             }
+
+            if (!layout.reactions.empty()) {
+                layout.reactionsTopPadding = (layout.contentHeight > 0 || layout.attachmentsHeight > 0)
+                                                 ? kReactionTopPadding
+                                                 : kReactionTopPaddingNoContent;
+                layout.reactionsHeight =
+                    layout.reactionsTopPadding + cursorY + kReactionHeight + kReactionBottomPadding;
+            }
+        }
+    }
+
+    if (!layout.isSystem) {
+        int contentBottom =
+            layout.contentTop + layout.contentHeight + layout.attachmentsHeight + layout.reactionsHeight;
+
+        int finalBottomPadding = bottomPadding;
+        if (!layout.attachments.empty()) {
+            finalBottomPadding = std::max(finalBottomPadding, attachmentsBottomPadding);
+        }
+        if (!layout.reactions.empty()) {
+            finalBottomPadding = std::max(finalBottomPadding, kContentBottomPadding);
+        }
+
+        if (layout.grouped) {
+            layout.height = contentBottom + finalBottomPadding;
+        } else {
+            layout.height = std::max(layout.avatarY + layout.avatarSize, contentBottom + finalBottomPadding);
         }
     }
 
@@ -1305,8 +1836,8 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
 void MessageWidget::draw(const Message &msg, const Layout &layout, int originX, int originY, bool avatarHovered) {
     if (layout.isSystem) {
         if (!layout.systemIconName.empty()) {
-            auto *icon = IconManager::load_recolored_icon(layout.systemIconName, layout.systemIconSize,
-                                                          layout.systemIconColor);
+            auto *icon =
+                IconManager::load_recolored_icon(layout.systemIconName, layout.systemIconSize, layout.systemIconColor);
             if (icon) {
                 icon->draw(originX + layout.systemIconX, originY + layout.systemIconY);
             }
@@ -1460,26 +1991,139 @@ void MessageWidget::draw(const Message &msg, const Layout &layout, int originX, 
                                                   kAttachmentCornerRadius, ThemeColors::BG_SECONDARY);
                 }
             } else {
-                RoundedStyle::drawRoundedRect(boxX, boxY, boxW, boxH, kAttachmentCornerRadius,
+                RoundedStyle::drawRoundedRect(boxX, boxY, boxW, boxH, kAttachmentCornerRadius, kAttachmentCornerRadius,
                                               kAttachmentCornerRadius, kAttachmentCornerRadius,
-                                              kAttachmentCornerRadius, ThemeColors::BG_SECONDARY);
+                                              ThemeColors::BG_TERTIARY);
                 RoundedStyle::drawRoundedOutline(boxX, boxY, boxW, boxH, kAttachmentCornerRadius,
                                                  kAttachmentCornerRadius, kAttachmentCornerRadius,
                                                  kAttachmentCornerRadius, ThemeColors::BG_MODIFIER_ACCENT);
 
-                int textX = boxX + kAttachmentFilePadding;
-                fl_color(ThemeColors::TEXT_NORMAL);
+                int iconPadY = std::max(0, (boxH - kAttachmentIconSize) / 2);
+                int iconLeftPad = iconPadY + 4;
+                int iconGap = 6;
+                int iconX = boxX + iconLeftPad;
+                int iconY = boxY + iconPadY;
+                auto *icon = IconManager::load_icon("attachment", kAttachmentIconSize);
+                if (icon && icon->w() > 0 && icon->h() > 0) {
+                    icon->draw(iconX, iconY);
+                }
+
+                int textX = iconX + kAttachmentIconSize + iconGap;
+
                 fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kAttachmentNameFontSize);
-                int nameAscent = fl_height() - fl_descent();
-                int nameBaseline = boxY + kAttachmentFilePadding + nameAscent;
-                fl_draw(attachment.filename.c_str(), textX, nameBaseline);
+                int nameHeight = fl_height();
+                int nameAscent = nameHeight - fl_descent();
+
+                fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kAttachmentMetaFontSize);
+                int metaHeight = fl_height();
+                int metaAscent = metaHeight - fl_descent();
+
+                int lineGap = 4;
+                int totalTextHeight = nameHeight + lineGap + metaHeight;
+                int textStartY = boxY + (boxH - totalTextHeight) / 2;
+
+                fl_color(ThemeColors::TEXT_LINK);
+                fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kAttachmentNameFontSize);
+                int nameBaseline = textStartY + nameAscent;
+                int downloadReserve =
+                    (attachmentLayout.downloadSize > 0) ? (attachmentLayout.downloadSize + kAttachmentDownloadPadding) : 0;
+                int textMaxWidth = boxX + boxW - iconPadY - downloadReserve - textX;
+                std::string filename =
+                    ellipsizeText(attachment.filename, std::max(0, textMaxWidth), FontLoader::Fonts::INTER_SEMIBOLD,
+                                  kAttachmentNameFontSize);
+                int filenameWidth = filename.empty() ? 0 : static_cast<int>(fl_width(filename.c_str()));
+                std::string meta = formatFileSize(attachment.size);
+
+                fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kAttachmentMetaFontSize);
+                int metaWidth = static_cast<int>(fl_width(meta.c_str()));
+                int textBlockWidth = std::max(filenameWidth, metaWidth);
+                int textStartX = textX;
+                if (textMaxWidth > textBlockWidth) {
+                    int centerOffset = (textMaxWidth - textBlockWidth) / 2;
+                    textStartX = textX + std::min(centerOffset, iconGap);
+                }
+
+                fl_color(ThemeColors::TEXT_LINK);
+                fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kAttachmentNameFontSize);
+                fl_draw(filename.c_str(), textStartX, nameBaseline + 1);
 
                 fl_color(ThemeColors::TEXT_MUTED);
-                fl_font(FontLoader::Fonts::INTER_REGULAR, kAttachmentMetaFontSize);
-                int metaAscent = fl_height() - fl_descent();
-                int metaBaseline = nameBaseline + 4 + metaAscent;
-                std::string meta = formatFileSize(attachment.size);
-                fl_draw(meta.c_str(), textX, metaBaseline);
+                fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kAttachmentMetaFontSize);
+                int metaBaseline = nameBaseline + lineGap + metaAscent;
+                fl_draw(meta.c_str(), textStartX, metaBaseline);
+
+                if (attachmentLayout.downloadSize > 0) {
+                    int downloadX = boxX + attachmentLayout.downloadXOffset;
+                    int downloadY = boxY + attachmentLayout.downloadYOffset;
+                    std::string downloadKey = getAttachmentDownloadKey(msg, i);
+                    bool downloadHovered = (downloadKey == hovered_attachment_download_key);
+
+                    if (downloadHovered) {
+                        RoundedStyle::drawRoundedRect(downloadX, downloadY, attachmentLayout.downloadSize,
+                                                      attachmentLayout.downloadSize, kAttachmentDownloadButtonRadius,
+                                                      kAttachmentDownloadButtonRadius, kAttachmentDownloadButtonRadius,
+                                                      kAttachmentDownloadButtonRadius, ThemeColors::BG_ACCENT);
+                    }
+
+                    Fl_Color downloadColor =
+                        downloadHovered ? ThemeColors::TEXT_NORMAL : ThemeColors::TEXT_MUTED;
+                    auto *downloadIcon =
+                        IconManager::load_recolored_icon("download", kAttachmentDownloadIconSize, downloadColor);
+                    if (downloadIcon && downloadIcon->w() > 0 && downloadIcon->h() > 0) {
+                        int iconDrawX = downloadX + (attachmentLayout.downloadSize - kAttachmentDownloadIconSize) / 2;
+                        int iconDrawY = downloadY + (attachmentLayout.downloadSize - kAttachmentDownloadIconSize) / 2;
+                        downloadIcon->draw(iconDrawX, iconDrawY);
+                    }
+                }
+            }
+        }
+    }
+
+    if (!layout.isSystem && !layout.reactions.empty()) {
+        int reactionsTop =
+            originY + layout.contentTop + layout.contentHeight + layout.attachmentsHeight + layout.reactionsTopPadding;
+
+        for (const auto &reactionLayout : layout.reactions) {
+            int boxX = originX + layout.contentX + reactionLayout.xOffset;
+            int boxY = reactionsTop + reactionLayout.yOffset;
+            Fl_Color bgColor = reactionLayout.me ? kReactionSelfBg : kReactionBg;
+
+            RoundedStyle::drawRoundedRect(boxX, boxY, reactionLayout.width, reactionLayout.height,
+                                          kReactionCornerRadius, kReactionCornerRadius, kReactionCornerRadius,
+                                          kReactionCornerRadius, bgColor);
+
+            if (reactionLayout.me) {
+                RoundedStyle::drawRoundedOutline(boxX, boxY, reactionLayout.width, reactionLayout.height,
+                                                 kReactionCornerRadius, kReactionCornerRadius, kReactionCornerRadius,
+                                                 kReactionCornerRadius, kReactionSelfBorder);
+            }
+
+            int emojiX = boxX + kReactionPaddingX;
+            int emojiY = boxY + (reactionLayout.height - reactionLayout.emojiSize) / 2;
+            int textX = emojiX + reactionLayout.emojiWidth + kReactionEmojiGap;
+
+            if (reactionLayout.isCustomEmoji && !reactionLayout.emojiUrl.empty()) {
+                Fl_RGB_Image *emoji = getEmojiImage(reactionLayout.emojiUrl, reactionLayout.emojiSize);
+                if (emoji && emoji->w() > 0 && emoji->h() > 0) {
+                    emoji->draw(emojiX, emojiY);
+                } else if (!reactionLayout.emojiName.empty()) {
+                    fl_color(kReactionTextColor);
+                    fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kReactionEmojiFontSize);
+                    int emojiBaseline = boxY + (reactionLayout.height + fl_height()) / 2 - fl_descent();
+                    fl_draw(reactionLayout.emojiName.c_str(), emojiX, emojiBaseline);
+                }
+            } else if (!reactionLayout.emojiName.empty()) {
+                fl_color(kReactionTextColor);
+                fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kReactionEmojiFontSize);
+                int emojiBaseline = boxY + (reactionLayout.height + fl_height()) / 2 - fl_descent();
+                fl_draw(reactionLayout.emojiName.c_str(), emojiX, emojiBaseline);
+            }
+
+            if (!reactionLayout.countText.empty()) {
+                fl_color(kReactionTextColor);
+                fl_font(FontLoader::Fonts::INTER_BOLD, kReactionFontSize);
+                int textBaseline = boxY + (reactionLayout.height + fl_height()) / 2 - fl_descent();
+                fl_draw(reactionLayout.countText.c_str(), textX, textBaseline);
             }
         }
     }
@@ -1501,6 +2145,10 @@ std::string MessageWidget::getAvatarCacheKey(const Message &msg, int size) {
     return buildAvatarCacheKey(url, size);
 }
 
+std::string MessageWidget::getAttachmentDownloadKey(const Message &msg, size_t attachmentIndex) {
+    return msg.id + ":" + std::to_string(attachmentIndex);
+}
+
 void MessageWidget::setHoveredAvatarKey(const std::string &key) {
     if (key == hovered_avatar_key) {
         return;
@@ -1515,6 +2163,10 @@ void MessageWidget::setHoveredAvatarKey(const std::string &key) {
     if (!hovered_avatar_key.empty()) {
         startAvatarAnimation(hovered_avatar_key);
     }
+}
+
+void MessageWidget::setHoveredAttachmentDownloadKey(const std::string &key) {
+    hovered_attachment_download_key = key;
 }
 
 void MessageWidget::pruneAvatarCache(const std::unordered_set<std::string> &keepKeys) {
@@ -1552,19 +2204,23 @@ void MessageWidget::pruneAttachmentCache(const std::unordered_set<std::string> &
     }
 }
 
+void MessageWidget::pruneEmojiCache(const std::unordered_set<std::string> &keepKeys) {
+    for (auto it = emoji_cache.begin(); it != emoji_cache.end();) {
+        if (keepKeys.find(it->first) == keepKeys.end()) {
+            size_t split = it->first.find('#');
+            if (split != std::string::npos) {
+                Images::evictFromMemory(it->first.substr(0, split));
+            }
+            it = emoji_cache.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 std::vector<MessageWidget::InlineItem> MessageWidget::tokenizeText(const std::string &text, Fl_Font font, int size,
                                                                    Fl_Color color) {
-    std::vector<MessageWidget::InlineItem> tokens;
-    auto runs = parseLinkRuns(text, color, ThemeColors::TEXT_LINK);
-    auto mdRuns = parseMarkdownRuns(runs);
-    for (const auto &mdRun : mdRuns) {
-        Fl_Font runFont = resolveMarkdownFont(font, mdRun.bold, mdRun.italic);
-        auto runTokens =
-            tokenizeStyledText(mdRun.text, runFont, size, mdRun.color, mdRun.linkUrl, mdRun.underline,
-                               mdRun.strikethrough);
-        tokens.insert(tokens.end(), runTokens.begin(), runTokens.end());
-    }
-    return tokens;
+    return tokenizeTextWithMessage(text, font, size, color, nullptr);
 }
 
 std::vector<MessageWidget::LayoutLine> MessageWidget::wrapText(const std::string &text, int maxWidth) {
@@ -1589,22 +2245,66 @@ std::vector<MessageWidget::LayoutLine> MessageWidget::wrapTokens(const std::vect
         currentWidth = 0;
     };
 
+    auto trimLeadingWhitespace = [](const std::string &str) -> std::string {
+        size_t start = 0;
+        while (start < str.size() && (str[start] == ' ' || str[start] == '\t')) {
+            start++;
+        }
+        return str.substr(start);
+    };
+
     for (auto token : tokens) {
         if (token.kind == InlineItem::Kind::LineBreak) {
             pushLine();
             continue;
         }
 
+        if (token.kind == InlineItem::Kind::Emoji) {
+            if (token.width <= 0) {
+                token.width = token.emojiSize > 0 ? token.emojiSize : kEmojiSize;
+            }
+
+            if (currentWidth + token.width > maxWidth && !currentLine.items.empty()) {
+                pushLine();
+            }
+
+            currentLine.items.push_back(token);
+            currentWidth += token.width;
+            continue;
+        }
+
+        if (token.kind == InlineItem::Kind::Text) {
+            if (currentLine.items.empty() && !token.text.empty()) {
+                std::string trimmed = trimLeadingWhitespace(token.text);
+                if (trimmed.empty()) {
+                    continue;
+                }
+                if (trimmed != token.text) {
+                    token.text = trimmed;
+                    fl_font(token.font, token.size);
+                    token.width = static_cast<int>(fl_width(token.text.c_str()));
+                }
+            }
+        }
+
         fl_font(token.font, token.size);
         token.width = static_cast<int>(fl_width(token.text.c_str()));
         if (token.width > maxWidth && token.text != " ") {
             auto splitTokens = splitLongToken(token, maxWidth);
-            for (const auto &part : splitTokens) {
+            for (auto part : splitTokens) {
                 if (currentWidth + part.width > maxWidth && !currentLine.items.empty()) {
                     pushLine();
                 }
-                if (part.text == " " && currentLine.items.empty()) {
-                    continue;
+                if (currentLine.items.empty() && part.kind == InlineItem::Kind::Text) {
+                    std::string trimmed = trimLeadingWhitespace(part.text);
+                    if (trimmed.empty()) {
+                        continue;
+                    }
+                    if (trimmed != part.text) {
+                        part.text = trimmed;
+                        fl_font(part.font, part.size);
+                        part.width = static_cast<int>(fl_width(part.text.c_str()));
+                    }
                 }
                 currentLine.items.push_back(part);
                 currentWidth += part.width;
@@ -1618,6 +2318,17 @@ std::vector<MessageWidget::LayoutLine> MessageWidget::wrapTokens(const std::vect
 
         if (currentWidth + token.width > maxWidth && !currentLine.items.empty()) {
             pushLine();
+            if (token.kind == InlineItem::Kind::Text) {
+                std::string trimmed = trimLeadingWhitespace(token.text);
+                if (trimmed.empty()) {
+                    continue;
+                }
+                if (trimmed != token.text) {
+                    token.text = trimmed;
+                    fl_font(token.font, token.size);
+                    token.width = static_cast<int>(fl_width(token.text.c_str()));
+                }
+            }
         }
 
         currentLine.items.push_back(token);

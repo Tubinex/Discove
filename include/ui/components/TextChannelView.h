@@ -6,9 +6,12 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "models/Message.h"
+#include "ui/VirtualScroll.h"
+#include "ui/components/MessageWidget.h"
 
 class Fl_RGB_Image;
 
@@ -54,6 +57,7 @@ class TextChannelView : public Fl_Group {
     void updatePermissions();
     void ensureEmojiAtlases(int targetSize);
     bool updateAvatarHover(int mx, int my, bool forceClear);
+    bool updateAttachmentDownloadHover(int mx, int my, bool forceClear);
     bool getEmojiButtonRect(int &outX, int &outY, int &outSize) const;
     bool getInputButtonRect(int index, int &outX, int &outY, int &outSize) const;
     bool getPlusButtonRect(int &outX, int &outY, int &outSize) const;
@@ -66,6 +70,22 @@ class TextChannelView : public Fl_Group {
         std::string hoverKey;
     };
 
+    struct AttachmentDownloadHitbox {
+        int x = 0;
+        int y = 0;
+        int size = 0;
+        std::string key;
+    };
+
+    struct LayoutCacheEntry {
+        MessageWidget::Layout layout;
+        int width = 0;
+        bool grouped = false;
+        bool compactBottom = false;
+    };
+
+    int estimateMessageHeight(const Message &msg, bool isGrouped) const;
+    int estimatedLineCount(const Message &msg) const;
 
     std::string m_channelId;
     std::string m_channelName;
@@ -86,13 +106,28 @@ class TextChannelView : public Fl_Group {
     std::vector<std::unique_ptr<Fl_RGB_Image>> m_emojiFramesInactive;
     std::vector<std::unique_ptr<Fl_RGB_Image>> m_emojiFramesActive;
     std::vector<AvatarHitbox> m_avatarHitboxes;
+    std::vector<AttachmentDownloadHitbox> m_attachmentDownloadHitboxes;
     std::string m_hoveredAvatarMessageId;
     std::string m_hoveredAvatarKey;
+    std::string m_hoveredAttachmentDownloadKey;
     uint64_t m_storeListenerId = 0;
     bool m_isDestroying = false;
+
+    std::unordered_map<std::string, LayoutCacheEntry> m_layoutCache;
+    std::unordered_map<std::string, int> m_heightEstimateCache;
+
+    std::vector<int> m_itemYPositions;
+    std::vector<int> m_separatorYPositions;
+    std::vector<std::string> m_previousMessageIds;
+    std::vector<int> m_previousItemYPositions;
+    std::vector<int> m_previousItemHeights;
+    int m_previousTotalHeight = 0;
+
+    bool m_shouldScrollToBottom = false;
+    bool m_messagesChanged = false;
 
     static constexpr int HEADER_HEIGHT = 48;
     static constexpr int MESSAGE_INPUT_HEIGHT = 74;
     static constexpr int MESSAGE_SPACING = 4;
-    static constexpr int MESSAGE_GROUP_SPACING = 26;
+    static constexpr int MESSAGE_GROUP_SPACING = 18;
 };

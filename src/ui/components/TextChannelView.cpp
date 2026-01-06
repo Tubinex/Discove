@@ -113,6 +113,70 @@ MessageWidget::ReplyPreview buildReplyPreview(const Message *referenced) {
     return preview;
 }
 
+} // namespace
+
+int TextChannelView::estimatedLineCount(const Message &msg) const {
+    if (msg.content.empty()) {
+        return 1;
+    }
+    return std::max(1, static_cast<int>(msg.content.length() / 60) + 1);
+}
+
+int TextChannelView::estimateMessageHeight(const Message &msg, bool isGrouped) const {
+    constexpr int kAvatarSize = 40;
+    constexpr int kAuthorHeight = 20;
+    constexpr int kLineHeight = 20;
+    constexpr int kReactionHeight = 28;
+    constexpr int kReactionRowSpacing = 6;
+    constexpr int kReactionTopPadding = 10;
+    constexpr int kReactionBottomPadding = 6;
+    constexpr int kReactionAvgWidth = 60;
+    constexpr int kReactionSpacing = 6;
+    constexpr int kAttachmentHeight = 300;
+    constexpr int kReplyPreviewHeight = 24;
+
+    if (msg.isSystemMessage()) {
+        return 32;
+    }
+
+    int height = 0;
+
+    if (!isGrouped) {
+        height += std::max(kAvatarSize, kAuthorHeight + 4);
+    }
+
+    if (msg.isReply()) {
+        height += kReplyPreviewHeight;
+    }
+
+    if (!msg.content.empty()) {
+        height += estimatedLineCount(msg) * kLineHeight;
+    } else {
+        height += kLineHeight;
+    }
+
+    if (!msg.attachments.empty()) {
+        height += kAttachmentHeight * static_cast<int>(msg.attachments.size());
+    }
+
+    if (!msg.reactions.empty()) {
+        int contentWidth = std::max(0, w() - 72);
+        if (contentWidth > 0) {
+            int reactionsPerRow = std::max(1, contentWidth / (kReactionAvgWidth + kReactionSpacing));
+            int reactionRows = (static_cast<int>(msg.reactions.size()) + reactionsPerRow - 1) / reactionsPerRow;
+            int reactionRowsHeight = reactionRows * kReactionHeight + (reactionRows - 1) * kReactionRowSpacing;
+            height += kReactionTopPadding + reactionRowsHeight + kReactionBottomPadding;
+        } else {
+            height += kReactionTopPadding + kReactionHeight + kReactionBottomPadding;
+        }
+    }
+
+    height += 8;
+    return height;
+}
+
+namespace {
+
 std::unique_ptr<Fl_RGB_Image> copyEmojiCell(Fl_RGB_Image *atlas, int cellX, int cellY, int cellSize, int targetSize) {
     if (!atlas || cellSize <= 0 || targetSize <= 0) {
         return nullptr;
@@ -287,10 +351,42 @@ TextChannelView::TextChannelView(int x, int y, int w, int h, const char *label) 
 
         auto it = state.channelMessages.find(m_channelId);
         if (it != state.channelMessages.end()) {
-            m_messages = it->second;
+            const auto &newMessages = it->second;
+
+            std::unordered_map<std::string, const Message *> newMessageMap;
+            for (const auto &msg : newMessages) {
+                newMessageMap[msg.id] = &msg;
+            }
+
+            for (const auto &oldMsg : m_messages) {
+                auto newMsgIt = newMessageMap.find(oldMsg.id);
+                if (newMsgIt != newMessageMap.end()) {
+                    const Message *newMsg = newMsgIt->second;
+
+                    bool contentChanged = (oldMsg.content != newMsg->content);
+                    bool attachmentsChanged = (oldMsg.attachments.size() != newMsg->attachments.size());
+                    bool embedsChanged = (oldMsg.embeds.size() != newMsg->embeds.size());
+                    bool editedChanged = (oldMsg.editedTimestamp != newMsg->editedTimestamp);
+
+                    bool reactionLayoutChanged = (oldMsg.reactions.size() != newMsg->reactions.size());
+                    if (contentChanged || reactionLayoutChanged || attachmentsChanged || embedsChanged ||
+                        editedChanged) {
+                        auto layoutIt = m_layoutCache.find(oldMsg.id);
+                        if (layoutIt != m_layoutCache.end()) {
+                            m_heightEstimateCache[oldMsg.id] = layoutIt->second.layout.height;
+                        }
+
+                        m_layoutCache.erase(oldMsg.id);
+                    }
+                }
+            }
+
+            m_messages = newMessages;
+            m_messagesChanged = true;
             redraw();
         } else {
             m_messages.clear();
+            m_messagesChanged = true;
             redraw();
         }
     });
@@ -328,6 +424,8 @@ void TextChannelView::draw() {
         m_messagesViewHeight = 0;
         m_avatarHitboxes.clear();
         updateAvatarHover(0, 0, true);
+        m_attachmentDownloadHitboxes.clear();
+        updateAttachmentDownloadHover(0, 0, true);
         drawWelcomeSection();
     } else {
         drawMessages();
@@ -426,6 +524,9 @@ int TextChannelView::handle(int event) {
         if (updateAvatarHover(mx, my, event == FL_LEAVE)) {
             hoverChanged = true;
         }
+        if (updateAttachmentDownloadHover(mx, my, event == FL_LEAVE)) {
+            hoverChanged = true;
+        }
 
         if (hoverChanged) {
             redraw();
@@ -451,13 +552,24 @@ void TextChannelView::setChannel(const std::string &channelId, const std::string
     m_channelName = channelName;
     m_guildId = guildId;
     m_welcomeVisible = isWelcomeVisible;
+    m_messagesContentHeight = 0;
     m_messagesScrollOffset = 0;
+    m_shouldScrollToBottom = true;
+    m_layoutCache.clear();
+    m_heightEstimateCache.clear();
     m_avatarHitboxes.clear();
+    m_attachmentDownloadHitboxes.clear();
     m_hoveredAvatarMessageId.clear();
+    m_hoveredAttachmentDownloadKey.clear();
+    m_previousMessageIds.clear();
+    m_previousItemYPositions.clear();
+    m_previousItemHeights.clear();
+    m_previousTotalHeight = 0;
     if (!m_hoveredAvatarKey.empty()) {
         m_hoveredAvatarKey.clear();
         MessageWidget::setHoveredAvatarKey("");
     }
+    MessageWidget::setHoveredAttachmentDownloadKey("");
     loadMessages();
     updatePermissions();
     redraw();
@@ -536,6 +648,34 @@ void TextChannelView::drawMessages() {
     }
     m_messagesViewHeight = std::max(0, viewBottom - viewTop);
     m_avatarHitboxes.clear();
+    m_attachmentDownloadHitboxes.clear();
+
+    int renderTop = viewTop - kMessageRenderPadding;
+    int renderBottom = viewBottom + kMessageRenderPadding;
+
+    struct AnchorInfo {
+        bool valid = false;
+        std::string messageId;
+        int screenY = 0;
+    };
+
+    AnchorInfo anchor;
+    if (!m_shouldScrollToBottom && m_messagesViewHeight > 0 && !m_previousMessageIds.empty() &&
+        m_previousMessageIds.size() == m_previousItemYPositions.size() &&
+        m_previousMessageIds.size() == m_previousItemHeights.size() && m_previousTotalHeight > 0) {
+        int previousYPos = viewBottom - m_previousTotalHeight + m_messagesScrollOffset;
+        for (size_t i = 0; i < m_previousMessageIds.size(); ++i) {
+            int messageTop = previousYPos + m_previousItemYPositions[i];
+            int messageBottom = messageTop + m_previousItemHeights[i];
+            if (messageBottom > viewTop) {
+                anchor.valid = true;
+                anchor.messageId = m_previousMessageIds[i];
+                anchor.screenY = messageTop;
+                break;
+            }
+        }
+    }
+
     std::vector<const Message *> ordered;
     ordered.reserve(m_messages.size());
     std::unordered_map<std::string, const Message *> messageById;
@@ -555,6 +695,7 @@ void TextChannelView::drawMessages() {
         const Message *msg = nullptr;
         MessageWidget::Layout layout;
         bool grouped = false;
+        int yPos = 0;
     };
 
     std::vector<RenderEntry> entries;
@@ -569,6 +710,8 @@ void TextChannelView::drawMessages() {
 
     std::vector<MessageInfo> messageInfos;
     messageInfos.reserve(ordered.size());
+    std::unordered_map<std::string, size_t> indexByMessageId;
+    indexByMessageId.reserve(ordered.size());
 
     std::string previousAuthorId;
     std::chrono::system_clock::time_point previousTimestamp;
@@ -598,6 +741,7 @@ void TextChannelView::drawMessages() {
         }
 
         messageInfos.push_back({msg, currentDate, isGrouped, needsSeparator});
+        indexByMessageId[msg->id] = messageInfos.size() - 1;
 
         if (!isSystem) {
             previousAuthorId = msg->authorId;
@@ -611,56 +755,153 @@ void TextChannelView::drawMessages() {
         previousDate = currentDate;
     }
 
-    int totalHeight = 0;
-    bool previousEntryWasSeparator = false;
-    previousWasSystem = false;
+    if (m_layoutCache.size() > 2000) {
+        std::unordered_set<std::string> currentMessageIds;
+        for (const auto &info : messageInfos) {
+            if (info.msg)
+                currentMessageIds.insert(info.msg->id);
+        }
+        for (auto it = m_layoutCache.begin(); it != m_layoutCache.end();) {
+            if (currentMessageIds.find(it->first) == currentMessageIds.end()) {
+                it = m_layoutCache.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto it = m_heightEstimateCache.begin(); it != m_heightEstimateCache.end();) {
+            if (currentMessageIds.find(it->first) == currentMessageIds.end()) {
+                it = m_heightEstimateCache.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
 
+    m_itemYPositions.clear();
+    m_separatorYPositions.clear();
+    m_itemYPositions.reserve(messageInfos.size());
+    m_separatorYPositions.reserve(messageInfos.size());
+
+    auto hasVisualExtras = [](const Message *msg) {
+        return msg && (!msg->attachments.empty() || !msg->embeds.empty() || !msg->reactions.empty());
+    };
+
+    std::vector<std::string> messageIds;
+    std::vector<int> itemHeights;
+    messageIds.reserve(messageInfos.size());
+    itemHeights.reserve(messageInfos.size());
+
+    int totalHeight = 0;
     for (size_t i = 0; i < messageInfos.size(); ++i) {
         const auto &info = messageInfos[i];
+
+        int separatorY = -1;
         if (info.needsSeparator) {
-            entries.push_back({RenderEntry::Type::Separator, info.date});
+            separatorY = totalHeight;
             totalHeight += kDateSeparatorHeight;
-            previousEntryWasSeparator = true;
         }
+        m_separatorYPositions.push_back(separatorY);
 
         if (!info.msg) {
+            m_itemYPositions.push_back(totalHeight);
+            messageIds.emplace_back();
+            itemHeights.push_back(0);
             continue;
         }
 
         bool isSystem = info.msg->isSystemMessage();
-        bool compactBottom = (i + 1 < messageInfos.size()) ? messageInfos[i + 1].grouped : false;
+        bool compactBottom = false;
+        if (i + 1 < messageInfos.size()) {
+            const auto &nextInfo = messageInfos[i + 1];
+            compactBottom = nextInfo.grouped;
+            if (compactBottom) {
+                bool currentHasExtras = !info.msg->attachments.empty() || !info.msg->reactions.empty();
+                bool nextHasExtras = nextInfo.msg && (!nextInfo.msg->attachments.empty() || !nextInfo.msg->reactions.empty());
+                compactBottom = !currentHasExtras && !nextHasExtras;
+            }
+        }
 
         int spacing = 0;
-        if (!previousEntryWasSeparator) {
-            if (info.grouped) {
-                spacing = 0;
-            } else if (isSystem && previousWasSystem) {
-                spacing = kSystemMessageSpacing;
-            } else {
-                spacing = MESSAGE_GROUP_SPACING;
+        if (i > 0) {
+            if (!info.needsSeparator) {
+                const auto &prev = messageInfos[i - 1];
+                if (info.grouped) {
+                    bool prevHasExtras = hasVisualExtras(prev.msg);
+                    bool currentHasExtras = hasVisualExtras(info.msg);
+                    spacing = (prevHasExtras || currentHasExtras) ? MESSAGE_GROUP_SPACING : 0;
+                } else if (isSystem && prev.msg && prev.msg->isSystemMessage()) {
+                    spacing = kSystemMessageSpacing;
+                } else {
+                    spacing = MESSAGE_GROUP_SPACING;
+                }
             }
         }
         totalHeight += spacing;
+        m_itemYPositions.push_back(totalHeight);
 
-        MessageWidget::ReplyPreview replyPreview;
-        MessageWidget::ReplyPreview *replyPtr = nullptr;
-        if (info.msg->isReply() && info.msg->referencedMessageId.has_value()) {
-            auto refIt = messageById.find(*info.msg->referencedMessageId);
-            const Message *referenced = (refIt != messageById.end()) ? refIt->second : nullptr;
-            replyPreview = buildReplyPreview(referenced);
-            replyPtr = &replyPreview;
+        int messageHeight;
+        try {
+            auto cacheIt = m_layoutCache.find(info.msg->id);
+            if (cacheIt != m_layoutCache.end() && cacheIt->second.width == w() &&
+                cacheIt->second.grouped == info.grouped && cacheIt->second.compactBottom == compactBottom) {
+                messageHeight = cacheIt->second.layout.height;
+            } else if (cacheIt != m_layoutCache.end() && cacheIt->second.grouped == info.grouped &&
+                       cacheIt->second.compactBottom == compactBottom) {
+                messageHeight = cacheIt->second.layout.height;
+            } else {
+                auto estimateIt = m_heightEstimateCache.find(info.msg->id);
+                if (estimateIt != m_heightEstimateCache.end()) {
+                    messageHeight = estimateIt->second;
+                } else {
+                    messageHeight = estimateMessageHeight(*info.msg, info.grouped);
+                    m_heightEstimateCache[info.msg->id] = messageHeight;
+                }
+            }
+        } catch (...) {
+            messageHeight = estimateMessageHeight(*info.msg, info.grouped);
+            m_heightEstimateCache[info.msg->id] = messageHeight;
         }
 
-        MessageWidget::Layout layout = MessageWidget::buildLayout(*info.msg, w(), info.grouped, compactBottom, replyPtr);
-        totalHeight += layout.height;
-        entries.push_back({RenderEntry::Type::Message, "", info.msg, layout, info.grouped});
-
-        previousWasSystem = isSystem;
-        previousEntryWasSeparator = false;
+        totalHeight += messageHeight;
+        messageIds.push_back(info.msg->id);
+        itemHeights.push_back(messageHeight);
     }
 
+    int extraBottomPadding = m_canSendMessages ? 0 : MESSAGE_INPUT_HEIGHT;
+    totalHeight += extraBottomPadding;
+
+    int oldContentHeight = m_messagesContentHeight;
     m_messagesContentHeight = totalHeight;
     int maxScroll = std::max(0, totalHeight - m_messagesViewHeight);
+
+    bool wasAtBottom = (m_messagesScrollOffset <= 10) || m_shouldScrollToBottom;
+    if (m_shouldScrollToBottom) {
+        m_messagesScrollOffset = 0;
+        m_shouldScrollToBottom = false;
+    } else if (oldContentHeight > 0 && totalHeight != oldContentHeight) {
+        int heightDiff = totalHeight - oldContentHeight;
+        if (wasAtBottom) {
+            m_messagesScrollOffset = 0;
+        } else if (anchor.valid) {
+            auto anchorIt = indexByMessageId.find(anchor.messageId);
+            if (anchorIt != indexByMessageId.end()) {
+                size_t anchorIndex = anchorIt->second;
+                if (anchorIndex < m_itemYPositions.size()) {
+                    int newOffset =
+                        anchor.screenY - viewBottom + totalHeight - m_itemYPositions[anchorIndex];
+                    m_messagesScrollOffset = std::clamp(newOffset, 0, maxScroll);
+                } else {
+                    m_messagesScrollOffset += heightDiff;
+                }
+            } else {
+                m_messagesScrollOffset += heightDiff;
+            }
+        } else {
+            m_messagesScrollOffset += heightDiff;
+        }
+    }
+
+    m_messagesChanged = false;
     if (m_messagesScrollOffset > maxScroll) {
         m_messagesScrollOffset = maxScroll;
     } else if (m_messagesScrollOffset < 0) {
@@ -668,86 +909,200 @@ void TextChannelView::drawMessages() {
     }
 
     int yPos = viewBottom - totalHeight + m_messagesScrollOffset;
-    int renderTop = viewTop - kMessageRenderPadding;
-    int renderBottom = viewBottom + kMessageRenderPadding;
+    for (size_t i = 0; i < messageInfos.size(); ++i) {
+        const auto &info = messageInfos[i];
+
+        if (i >= m_itemYPositions.size() || i >= m_separatorYPositions.size()) {
+            continue;
+        }
+
+        if (info.needsSeparator && m_separatorYPositions[i] >= 0) {
+            int sepY = yPos + m_separatorYPositions[i];
+            if (sepY + kDateSeparatorHeight >= renderTop && sepY <= renderBottom) {
+                RenderEntry entry;
+                entry.type = RenderEntry::Type::Separator;
+                entry.date = info.date;
+                entry.yPos = sepY;
+                entries.push_back(entry);
+            }
+        }
+
+        if (!info.msg) {
+            continue;
+        }
+
+        bool isSystem = info.msg->isSystemMessage();
+        bool compactBottom = false;
+        if (i + 1 < messageInfos.size()) {
+            const auto &nextInfo = messageInfos[i + 1];
+            compactBottom = nextInfo.grouped;
+            if (compactBottom) {
+                bool currentHasExtras = !info.msg->attachments.empty() || !info.msg->reactions.empty();
+                bool nextHasExtras = nextInfo.msg && (!nextInfo.msg->attachments.empty() || !nextInfo.msg->reactions.empty());
+                compactBottom = !currentHasExtras && !nextHasExtras;
+            }
+        }
+
+        int messageY = yPos + m_itemYPositions[i];
+        int estimatedHeight = 100;
+        auto estimateIt = m_heightEstimateCache.find(info.msg->id);
+        if (estimateIt != m_heightEstimateCache.end()) {
+            estimatedHeight = estimateIt->second;
+        }
+
+        if (messageY + estimatedHeight < renderTop || messageY > renderBottom) {
+            continue;
+        }
+
+        auto cacheIt = m_layoutCache.find(info.msg->id);
+        bool needsLayout = (cacheIt == m_layoutCache.end() || cacheIt->second.width != w() ||
+                            cacheIt->second.grouped != info.grouped || cacheIt->second.compactBottom != compactBottom);
+
+        if (needsLayout) {
+            try {
+                MessageWidget::ReplyPreview replyPreview;
+                MessageWidget::ReplyPreview *replyPtr = nullptr;
+                if (info.msg->isReply() && info.msg->referencedMessageId.has_value()) {
+                    auto refIt = messageById.find(*info.msg->referencedMessageId);
+                    const Message *referenced = (refIt != messageById.end()) ? refIt->second : nullptr;
+                    replyPreview = buildReplyPreview(referenced);
+                    replyPtr = &replyPreview;
+                }
+
+                MessageWidget::Layout layout =
+                    MessageWidget::buildLayout(*info.msg, w(), info.grouped, compactBottom, replyPtr);
+
+                int layoutHeight = layout.height;
+
+                LayoutCacheEntry cacheEntry;
+                cacheEntry.layout = std::move(layout);
+                cacheEntry.width = w();
+                cacheEntry.grouped = info.grouped;
+                cacheEntry.compactBottom = compactBottom;
+                m_layoutCache[info.msg->id] = std::move(cacheEntry);
+                m_heightEstimateCache[info.msg->id] = layoutHeight;
+            } catch (...) {
+                continue;
+            }
+            cacheIt = m_layoutCache.find(info.msg->id);
+        }
+
+        if (cacheIt == m_layoutCache.end()) {
+            continue;
+        }
+
+        int messageHeight = cacheIt->second.layout.height;
+        if (messageY + messageHeight < renderTop || messageY > renderBottom) {
+            continue;
+        }
+
+        RenderEntry entry;
+        entry.type = RenderEntry::Type::Message;
+        entry.msg = info.msg;
+        entry.layout = cacheIt->second.layout;
+        entry.grouped = info.grouped;
+        entry.yPos = messageY;
+        entries.push_back(entry);
+    }
 
     std::unordered_set<std::string> keepAvatarKeys;
     std::unordered_set<std::string> keepAnimatedAvatarKeys;
     std::unordered_set<std::string> keepAttachmentKeys;
-
-    bool drawingAfterSeparator = false;
-    previousWasSystem = false;
-    for (const auto &entry : entries) {
-        if (entry.type == RenderEntry::Type::Separator) {
-            int separatorTop = yPos;
-            int separatorBottom = yPos + kDateSeparatorHeight;
-            if (separatorBottom >= renderTop && separatorTop <= renderBottom) {
-                drawDateSeparator(entry.date, yPos);
-            } else {
-                yPos += kDateSeparatorHeight;
+    std::unordered_set<std::string> keepEmojiKeys;
+    for (auto &entry : entries) {
+        try {
+            if (entry.type == RenderEntry::Type::Separator) {
+                int separatorY = entry.yPos;
+                drawDateSeparator(entry.date, separatorY);
+                continue;
             }
-            drawingAfterSeparator = true;
+
+            if (entry.msg) {
+                int messageY = entry.yPos;
+                bool avatarHovered = false;
+                if (!entry.grouped && !entry.msg->isSystemMessage()) {
+                    AvatarHitbox hitbox;
+                    hitbox.x = x() + entry.layout.avatarX;
+                    hitbox.y = messageY + entry.layout.avatarY;
+                    hitbox.size = entry.layout.avatarSize;
+                    hitbox.messageId = entry.msg->id;
+                    hitbox.hoverKey = MessageWidget::getAnimatedAvatarKey(*entry.msg, entry.layout.avatarSize);
+
+                    std::string animatedAvatarKey = hitbox.hoverKey;
+                    std::string avatarKey = MessageWidget::getAvatarCacheKey(*entry.msg, entry.layout.avatarSize);
+
+                    m_avatarHitboxes.push_back(std::move(hitbox));
+                    avatarHovered = (entry.msg->id == m_hoveredAvatarMessageId);
+
+                    if (!avatarKey.empty()) {
+                        keepAvatarKeys.insert(avatarKey);
+                    }
+                    if (!animatedAvatarKey.empty()) {
+                        keepAnimatedAvatarKeys.insert(animatedAvatarKey);
+                    }
+                }
+
+                for (const auto &attachmentLayout : entry.layout.attachments) {
+                    if (!attachmentLayout.cacheKey.empty()) {
+                        keepAttachmentKeys.insert(attachmentLayout.cacheKey);
+                    }
+                }
+
+                for (const auto &line : entry.layout.lines) {
+                    for (const auto &item : line.items) {
+                        if (item.kind == MessageWidget::InlineItem::Kind::Emoji && !item.emojiCacheKey.empty()) {
+                            keepEmojiKeys.insert(item.emojiCacheKey);
+                        }
+                    }
+                }
+
+                for (const auto &reactionLayout : entry.layout.reactions) {
+                    if (!reactionLayout.emojiCacheKey.empty()) {
+                        keepEmojiKeys.insert(reactionLayout.emojiCacheKey);
+                    }
+                }
+
+                MessageWidget::draw(*entry.msg, entry.layout, x(), messageY, avatarHovered);
+
+                if (!entry.layout.isSystem && !entry.layout.attachments.empty() && !entry.msg->attachments.empty()) {
+                    int attachmentsTop =
+                        messageY + entry.layout.contentTop + entry.layout.contentHeight + entry.layout.attachmentsTopPadding;
+                    size_t count = std::min(entry.layout.attachments.size(), entry.msg->attachments.size());
+
+                    for (size_t i = 0; i < count; ++i) {
+                        const auto &attachmentLayout = entry.layout.attachments[i];
+                        if (attachmentLayout.isImage || attachmentLayout.downloadSize <= 0) {
+                            continue;
+                        }
+
+                        int boxX = x() + entry.layout.contentX + attachmentLayout.xOffset;
+                        int boxY = attachmentsTop + attachmentLayout.yOffset;
+                        int buttonX = boxX + attachmentLayout.downloadXOffset;
+                        int buttonY = boxY + attachmentLayout.downloadYOffset;
+
+                        AttachmentDownloadHitbox hitbox;
+                        hitbox.x = buttonX;
+                        hitbox.y = buttonY;
+                        hitbox.size = attachmentLayout.downloadSize;
+                        hitbox.key = MessageWidget::getAttachmentDownloadKey(*entry.msg, i);
+                        m_attachmentDownloadHitboxes.push_back(std::move(hitbox));
+                    }
+                }
+            }
+        } catch (...) {
             continue;
         }
-
-        int spacing = 0;
-        if (!drawingAfterSeparator) {
-            if (entry.grouped) {
-                spacing = 0;
-            } else if (entry.msg && entry.msg->isSystemMessage() && previousWasSystem) {
-                spacing = kSystemMessageSpacing;
-            } else {
-                spacing = MESSAGE_GROUP_SPACING;
-            }
-        }
-        int entryTop = yPos + spacing;
-        int entryBottom = entryTop + entry.layout.height;
-        bool visible = entryBottom >= renderTop && entryTop <= renderBottom;
-
-        yPos += spacing;
-        if (visible && entry.msg) {
-            bool avatarHovered = false;
-            if (!entry.grouped && !entry.msg->isSystemMessage()) {
-                AvatarHitbox hitbox;
-                hitbox.x = x() + entry.layout.avatarX;
-                hitbox.y = yPos + entry.layout.avatarY;
-                hitbox.size = entry.layout.avatarSize;
-                hitbox.messageId = entry.msg->id;
-                hitbox.hoverKey = MessageWidget::getAnimatedAvatarKey(*entry.msg, entry.layout.avatarSize);
-                m_avatarHitboxes.push_back(std::move(hitbox));
-                avatarHovered = (entry.msg->id == m_hoveredAvatarMessageId);
-
-                std::string avatarKey = MessageWidget::getAvatarCacheKey(*entry.msg, entry.layout.avatarSize);
-                if (!avatarKey.empty()) {
-                    keepAvatarKeys.insert(avatarKey);
-                }
-                if (!hitbox.hoverKey.empty()) {
-                    keepAnimatedAvatarKeys.insert(hitbox.hoverKey);
-                }
-            }
-
-            for (const auto &attachmentLayout : entry.layout.attachments) {
-                if (!attachmentLayout.cacheKey.empty()) {
-                    keepAttachmentKeys.insert(attachmentLayout.cacheKey);
-                }
-            }
-
-            MessageWidget::draw(*entry.msg, entry.layout, x(), yPos, avatarHovered);
-        }
-        yPos += entry.layout.height;
-        previousWasSystem = entry.msg && entry.msg->isSystemMessage();
-        drawingAfterSeparator = false;
     }
 
     MessageWidget::pruneAvatarCache(keepAvatarKeys);
     MessageWidget::pruneAnimatedAvatarCache(keepAnimatedAvatarKeys);
     MessageWidget::pruneAttachmentCache(keepAttachmentKeys);
+    MessageWidget::pruneEmojiCache(keepEmojiKeys);
 
     if (!m_hoveredAvatarMessageId.empty()) {
-        bool stillVisible = std::any_of(m_avatarHitboxes.begin(), m_avatarHitboxes.end(),
-                                        [this](const AvatarHitbox &hitbox) {
-                                            return hitbox.messageId == m_hoveredAvatarMessageId;
-                                        });
+        bool stillVisible =
+            std::any_of(m_avatarHitboxes.begin(), m_avatarHitboxes.end(),
+                        [this](const AvatarHitbox &hitbox) { return hitbox.messageId == m_hoveredAvatarMessageId; });
         if (!stillVisible) {
             m_hoveredAvatarMessageId.clear();
             if (!m_hoveredAvatarKey.empty()) {
@@ -756,6 +1111,23 @@ void TextChannelView::drawMessages() {
             }
         }
     }
+
+    if (!m_hoveredAttachmentDownloadKey.empty()) {
+        bool stillVisible =
+            std::any_of(m_attachmentDownloadHitboxes.begin(), m_attachmentDownloadHitboxes.end(),
+                        [this](const AttachmentDownloadHitbox &hitbox) {
+                            return hitbox.key == m_hoveredAttachmentDownloadKey;
+                        });
+        if (!stillVisible) {
+            m_hoveredAttachmentDownloadKey.clear();
+            MessageWidget::setHoveredAttachmentDownloadKey("");
+        }
+    }
+
+    m_previousMessageIds = std::move(messageIds);
+    m_previousItemYPositions = m_itemYPositions;
+    m_previousItemHeights = std::move(itemHeights);
+    m_previousTotalHeight = totalHeight;
 }
 
 void TextChannelView::drawDateSeparator(const std::string &date, int &yPos) {
@@ -938,6 +1310,27 @@ bool TextChannelView::updateAvatarHover(int mx, int my, bool forceClear) {
         m_hoveredAvatarMessageId = newMessageId;
         m_hoveredAvatarKey = newHoverKey;
         MessageWidget::setHoveredAvatarKey(m_hoveredAvatarKey);
+    }
+
+    return changed;
+}
+
+bool TextChannelView::updateAttachmentDownloadHover(int mx, int my, bool forceClear) {
+    std::string newKey;
+
+    if (!forceClear) {
+        for (const auto &hitbox : m_attachmentDownloadHitboxes) {
+            if (mx >= hitbox.x && mx < hitbox.x + hitbox.size && my >= hitbox.y && my < hitbox.y + hitbox.size) {
+                newKey = hitbox.key;
+                break;
+            }
+        }
+    }
+
+    bool changed = newKey != m_hoveredAttachmentDownloadKey;
+    if (changed) {
+        m_hoveredAttachmentDownloadKey = newKey;
+        MessageWidget::setHoveredAttachmentDownloadKey(m_hoveredAttachmentDownloadKey);
     }
 
     return changed;

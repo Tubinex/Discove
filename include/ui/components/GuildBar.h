@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "state/Store.h"
+#include "ui/VirtualScroll.h"
 
 class GuildBar : public Fl_Group {
   public:
@@ -55,9 +56,36 @@ class GuildBar : public Fl_Group {
     int getSeparatorSpacing() const { return m_separatorSpacing; }
 
   private:
+    enum class BarItemType { Home, Separator, Space, Guild, Folder };
+
+    struct BarItem {
+        BarItemType type;
+        int height;
+        std::string guildId;
+        std::vector<std::string> folderGuildIds;
+        int folderId = -1;
+        std::optional<uint32_t> folderColor;
+        std::string guildIconHash;
+        std::string guildName;
+    };
+
+    struct PooledWidget {
+        Fl_Widget *widget = nullptr;
+        int boundDataIndex = -1;
+        bool inUse = false;
+    };
+
     void subscribeToStore();
     void bindGuildIcon(class GuildIcon *icon);
     void applySelection();
+
+    std::vector<BarItem> buildItemList();
+    void updateVisibleWidgets();
+    PooledWidget &acquireWidget(BarItemType type);
+    void releaseWidget(PooledWidget &pooled);
+    void bindItemToWidget(size_t itemIndex);
+    Fl_Widget *createWidgetForType(BarItemType type);
+    bool widgetMatchesType(Fl_Widget *widget, BarItemType type);
 
     Store::ListenerId m_guildDataListenerId = 0;
     double m_scrollOffset = 0.0;
@@ -74,4 +102,8 @@ class GuildBar : public Fl_Group {
     std::vector<std::string> m_layoutSignature;
     std::string m_selectedGuildId;
     bool m_homeSelected = false;
+
+    std::vector<BarItem> m_items;
+    std::vector<PooledWidget> m_widgetPool;
+    VirtualScroll::HeightCache m_heightCache;
 };

@@ -12,7 +12,7 @@
 class MessageWidget {
   public:
     struct InlineItem {
-        enum class Kind { Text, LineBreak };
+        enum class Kind { Text, LineBreak, Emoji };
 
         Kind kind = Kind::Text;
         std::string text;
@@ -24,6 +24,9 @@ class MessageWidget {
         bool isLink = false;
         bool underline = false;
         bool strikethrough = false;
+        std::string emojiUrl;
+        std::string emojiCacheKey;
+        int emojiSize = 0;
     };
 
     struct LayoutLine {
@@ -45,6 +48,25 @@ class MessageWidget {
         std::string cacheKey;
         int xOffset = 0;
         int yOffset = 0;
+        int downloadXOffset = 0;
+        int downloadYOffset = 0;
+        int downloadSize = 0;
+    };
+
+    struct ReactionLayout {
+        int width = 0;
+        int height = 0;
+        int xOffset = 0;
+        int yOffset = 0;
+        bool isCustomEmoji = false;
+        bool animated = false;
+        bool me = false;
+        int emojiSize = 0;
+        int emojiWidth = 0;
+        std::string emojiName;
+        std::string emojiUrl;
+        std::string emojiCacheKey;
+        std::string countText;
     };
 
     struct Layout {
@@ -55,7 +77,10 @@ class MessageWidget {
         int contentBaseline = 0;
         int contentTop = 0;
         int contentHeight = 0;
+        int attachmentsHeight = 0;
         int attachmentsTopPadding = 0;
+        int reactionsTopPadding = 0;
+        int reactionsHeight = 0;
         int contentWidth = 0;
         bool hasReply = false;
         int replyX = 0;
@@ -84,6 +109,7 @@ class MessageWidget {
         std::vector<LayoutLine> lines;
         std::vector<InlineItem> replyItems;
         std::vector<AttachmentLayout> attachments;
+        std::vector<ReactionLayout> reactions;
     };
 
     static Layout buildLayout(const Message &msg, int viewWidth, bool isGrouped, bool compactBottom,
@@ -91,10 +117,13 @@ class MessageWidget {
     static void draw(const Message &msg, const Layout &layout, int originX, int originY, bool avatarHovered);
     static std::string getAvatarCacheKey(const Message &msg, int size);
     static std::string getAnimatedAvatarKey(const Message &msg, int size);
+    static std::string getAttachmentDownloadKey(const Message &msg, size_t attachmentIndex);
     static void setHoveredAvatarKey(const std::string &key);
+    static void setHoveredAttachmentDownloadKey(const std::string &key);
     static void pruneAvatarCache(const std::unordered_set<std::string> &keepKeys);
     static void pruneAnimatedAvatarCache(const std::unordered_set<std::string> &keepKeys);
     static void pruneAttachmentCache(const std::unordered_set<std::string> &keepKeys);
+    static void pruneEmojiCache(const std::unordered_set<std::string> &keepKeys);
 
   private:
     static std::vector<InlineItem> tokenizeText(const std::string &text, Fl_Font font, int size, Fl_Color color);

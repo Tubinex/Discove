@@ -135,6 +135,12 @@ class Gateway {
     void handleReady(const Json &data);
     void handleReadySupplemental(const Json &data);
     void handleMessageCreate(const Json &data);
+    void handleMessageUpdate(const Json &data);
+    void handleMessageDelete(const Json &data);
+    void handleMessageReactionAdd(const Json &data);
+    void handleMessageReactionRemove(const Json &data);
+    void handleMessageReactionRemoveAll(const Json &data);
+    void handleMessageReactionRemoveEmoji(const Json &data);
     void handleUserSettingsProtoUpdate(const Json &data);
 
     void handleHello(const Json &data);

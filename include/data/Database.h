@@ -23,6 +23,8 @@ class Database {
 
     bool insertMessage(const Message &msg);
     int insertMessages(const std::vector<Message> &messages);
+    bool updateMessage(const Message &msg);
+    bool deleteMessage(const std::string &messageId);
 
     std::vector<Message> getChannelMessages(const std::string &channelId, int limit = 50);
 

@@ -2,6 +2,7 @@
 
 #include "state/AppState.h"
 #include "ui/Theme.h"
+#include "utils/Fonts.h"
 #include "utils/Logger.h"
 
 #include <FL/Fl.H>
@@ -67,7 +68,7 @@ void DMSidebar::draw() {
 
 void DMSidebar::drawHeader() {
     fl_color(ThemeColors::TEXT_NORMAL);
-    fl_font(FL_HELVETICA_BOLD, 15);
+    fl_font(FontLoader::Fonts::INTER_BOLD, 15);
 
     int textY = y() + 18;
     fl_draw("Direct Messages", x() + 16, textY);

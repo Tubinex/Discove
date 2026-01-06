@@ -265,10 +265,25 @@ bool GuildIcon::ensureGifLoaded() {
     if (gifAnimation_)
         return true;
 
-    std::string url = CDNUtils::getGuildIconUrl(guildId_, iconHash_, iconSize_ * 2, false);
+    std::string url = CDNUtils::getGuildIconUrl(guildId_, iconHash_, iconSize_, false);
     std::string gifPath = Images::getCacheFilePath(url, "gif");
 
     if (!std::filesystem::exists(gifPath)) {
+        Images::loadImageAsync(url, [this](Fl_RGB_Image *img) {
+            {
+                std::scoped_lock lock(iconsMutex);
+                if (validIcons.find(this) == validIcons.end()) {
+                    return;
+                }
+            }
+            if (!img) {
+                return;
+            }
+            if (ensureGifLoaded() && isHovered_) {
+                startAnimation();
+            }
+            redraw();
+        });
         Logger::debug("GIF not yet cached for animated icon: " + guildId_);
         return false;
     }

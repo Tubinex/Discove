@@ -108,6 +108,12 @@ Message Message::fromJson(const nlohmann::json &j) {
         }
     }
 
+    if (j.contains("reactions") && j["reactions"].is_array()) {
+        for (const auto &reactionJson : j["reactions"]) {
+            message.reactions.push_back(Reaction::fromJson(reactionJson));
+        }
+    }
+
     if (j.contains("nonce") && !j["nonce"].is_null()) {
         if (j["nonce"].is_string()) {
             message.nonce = j["nonce"].get<std::string>();

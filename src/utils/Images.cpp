@@ -529,16 +529,29 @@ void processImageRequest(const std::string &url, ImageCallback callback, int ret
     }
 
     std::string format = detectImageFormat(imageData);
-    if (format == "unknown") {
-        Logger::error("Unknown image format for: " + url + " (size: " + std::to_string(imageData.size()) + " bytes)");
-    } else {
-        saveToCache(url, imageData, format);
+    if (format == "unknown" || format == "webp") {
+        Logger::warn("Unsupported image format for: " + url + " (format: " + format +
+                     ", size: " + std::to_string(imageData.size()) + " bytes)");
+        markUrlAsFailed(url);
+        clearRetryState(url);
+        auto *heapFn = new std::function<void()>([callback]() { callback(nullptr); });
+        Fl::awake(
+            [](void *p) {
+                std::unique_ptr<std::function<void()>> fnPtr(static_cast<std::function<void()> *>(p));
+                (*fnPtr)();
+            },
+            heapFn);
+        return;
     }
+
+    saveToCache(url, imageData, format);
 
     Fl_RGB_Image *image = imageFromData(imageData, url);
     if (!image) {
         Logger::error("Failed to decode image from: " + url + " (format: " + format +
                       ", size: " + std::to_string(imageData.size()) + " bytes)");
+        markUrlAsFailed(url);
+        clearRetryState(url);
         auto *heapFn = new std::function<void()>([callback]() { callback(nullptr); });
         Fl::awake(
             [](void *p) {
@@ -608,6 +621,9 @@ void downloadWorker() {
 void downloadImageAsync(const std::string &url, ImageCallback callback) {
     {
         std::scoped_lock lock(queue_mutex);
+        if (!shouldAttemptDownload(url)) {
+            return;
+        }
         if (pending_downloads.find(url) != pending_downloads.end()) {
             return;
         }
@@ -658,6 +674,17 @@ void loadImageAsync(const std::string &url, ImageCallback callback) {
             callback(it->second.get());
             return;
         }
+    }
+
+    if (!shouldAttemptDownload(url)) {
+        auto *heapFn = new std::function<void()>([callback]() { callback(nullptr); });
+        Fl::awake(
+            [](void *p) {
+                std::unique_ptr<std::function<void()>> fnPtr(static_cast<std::function<void()> *>(p));
+                (*fnPtr)();
+            },
+            heapFn);
+        return;
     }
 
     downloadImageAsync(url, callback);
