@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <map>
 
@@ -52,6 +53,72 @@ std::string ellipsizeText(const std::string &text, int maxWidth) {
 
     return truncated.empty() ? std::string(ellipsis) : truncated + ellipsis;
 }
+
+struct ChannelSignature {
+    std::string id;
+    std::string name;
+    int position = 0;
+    std::string parentId;
+    ChannelType type = ChannelType::GUILD_TEXT;
+    uint64_t permsHash = 0;
+
+    bool operator==(const ChannelSignature &other) const {
+        return id == other.id && name == other.name && position == other.position && parentId == other.parentId &&
+               type == other.type && permsHash == other.permsHash;
+    }
+
+    bool operator!=(const ChannelSignature &other) const { return !(*this == other); }
+};
+
+uint64_t hashCombine(uint64_t seed, uint64_t value) {
+    return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
+}
+
+uint64_t hashString(const std::string &value) {
+    return static_cast<uint64_t>(std::hash<std::string>{}(value));
+}
+
+uint64_t hashOverwrites(const std::vector<PermissionOverwrite> &overwrites) {
+    uint64_t seed = 0;
+    for (const auto &entry : overwrites) {
+        seed = hashCombine(seed, hashString(entry.id));
+        seed = hashCombine(seed, static_cast<uint64_t>(entry.type));
+        seed = hashCombine(seed, entry.allow);
+        seed = hashCombine(seed, entry.deny);
+    }
+    return seed;
+}
+
+std::vector<ChannelSignature> buildChannelSignature(const AppState &state, const std::string &guildId) {
+    std::vector<ChannelSignature> signatures;
+    if (guildId.empty()) {
+        return signatures;
+    }
+
+    auto it = state.guildChannels.find(guildId);
+    if (it == state.guildChannels.end()) {
+        return signatures;
+    }
+
+    const auto &channels = it->second;
+    signatures.reserve(channels.size());
+    for (const auto &channel : channels) {
+        if (!channel) {
+            continue;
+        }
+
+        ChannelSignature sig;
+        sig.id = channel->id;
+        sig.name = channel->name.value_or("");
+        sig.position = channel->position;
+        sig.parentId = channel->parentId.value_or("");
+        sig.type = channel->type;
+        sig.permsHash = hashOverwrites(channel->permissionOverwrites);
+        signatures.push_back(std::move(sig));
+    }
+
+    return signatures;
+}
 } // namespace
 
 std::map<std::string, std::map<std::string, bool>> GuildSidebar::s_guildCategoryCollapsedState;
@@ -60,9 +127,39 @@ GuildSidebar::GuildSidebar(int x, int y, int w, int h, const char *label) : Fl_G
     box(FL_NO_BOX);
     clip_children(1);
     end();
+
+    m_storeListenerId = Store::get().subscribe<std::vector<ChannelSignature>>(
+        [this](const AppState &state) { return buildChannelSignature(state, m_guildId); },
+        [this](const std::vector<ChannelSignature> &) {
+            if (m_guildId.empty()) {
+                return;
+            }
+            Fl::lock();
+            loadChannelsFromStore();
+            redraw();
+            Fl::unlock();
+            Fl::awake();
+        },
+        [](const std::vector<ChannelSignature> &a, const std::vector<ChannelSignature> &b) {
+            if (a.size() != b.size()) {
+                return false;
+            }
+            for (size_t i = 0; i < a.size(); ++i) {
+                if (a[i] != b[i]) {
+                    return false;
+                }
+            }
+            return true;
+        },
+        true);
 }
 
-GuildSidebar::~GuildSidebar() { stopBannerAnimation(); }
+GuildSidebar::~GuildSidebar() {
+    stopBannerAnimation();
+    if (m_storeListenerId) {
+        Store::get().unsubscribe(m_storeListenerId);
+    }
+}
 
 void GuildSidebar::draw() {
     fl_push_clip(x(), y(), w(), h());
@@ -724,6 +821,11 @@ void GuildSidebar::setGuildId(const std::string &guildId) {
 
 void GuildSidebar::loadChannelsFromStore() {
     auto state = Store::get().snapshot();
+
+    m_categories.clear();
+    m_uncategorizedChannels.clear();
+    m_hoveredChannelIndex = -1;
+    m_hoveredCategoryId.clear();
 
     auto it = state.guildChannels.find(m_guildId);
     if (it == state.guildChannels.end()) {

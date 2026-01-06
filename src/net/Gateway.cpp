@@ -326,6 +326,7 @@ void Gateway::receive(const std::string &text) {
                  [](Gateway *gw, const Json &data) { gw->handleMessageReactionRemoveAll(data); }},
                 {"MESSAGE_REACTION_REMOVE_EMOJI",
                  [](Gateway *gw, const Json &data) { gw->handleMessageReactionRemoveEmoji(data); }},
+                {"CHANNEL_UPDATE", [](Gateway *gw, const Json &data) { gw->handleChannelUpdate(data); }},
                 {"USER_SETTINGS_PROTO_UPDATE",
                  [](Gateway *gw, const Json &data) { gw->handleUserSettingsProtoUpdate(data); }},
                 {"RESUMED", [](Gateway *, const Json &) { Logger::info("Session successfully resumed"); }},
@@ -831,6 +832,22 @@ void Gateway::handleMessageCreate(const Json &data) {
                 std::sort(messages.begin(), messages.end(),
                           [](const Message &a, const Message &b) { return a.timestamp < b.timestamp; });
             }
+
+            if (message.nonce.has_value()) {
+                auto pendingIt = state.pendingChannelMessages.find(message.channelId);
+                if (pendingIt != state.pendingChannelMessages.end()) {
+                    auto &pending = pendingIt->second;
+                    pending.erase(std::remove_if(pending.begin(), pending.end(),
+                                                 [&](const Message &pendingMsg) {
+                                                     return pendingMsg.nonce.has_value() &&
+                                                            pendingMsg.nonce == message.nonce;
+                                                 }),
+                                  pending.end());
+                    if (pending.empty()) {
+                        state.pendingChannelMessages.erase(pendingIt);
+                    }
+                }
+            }
         });
 
         Logger::debug("Stored message " + message.id + " in channel " + message.channelId);
@@ -1168,6 +1185,85 @@ void Gateway::handleMessageReactionRemoveEmoji(const Json &data) {
     }
 }
 
+void Gateway::handleChannelUpdate(const Json &data) {
+    try {
+        if (!data.contains("id") || !data["id"].is_string()) {
+            Logger::warn("CHANNEL_UPDATE missing id field");
+            return;
+        }
+
+        std::unique_ptr<Channel> channel = Channel::fromJson(data);
+        if (!channel) {
+            Logger::warn("CHANNEL_UPDATE failed to parse channel");
+            return;
+        }
+
+        if (channel->isGuildChannel()) {
+            auto *guildChannel = dynamic_cast<GuildChannel *>(channel.get());
+            if (!guildChannel) {
+                Logger::warn("CHANNEL_UPDATE invalid guild channel payload");
+                return;
+            }
+
+            if (guildChannel->guildId.empty()) {
+                Logger::warn("CHANNEL_UPDATE missing guild_id field");
+                return;
+            }
+
+            std::shared_ptr<GuildChannel> updated(static_cast<GuildChannel *>(channel.release()));
+            Store::get().update([updated](AppState &state) {
+                auto &channels = state.guildChannels[updated->guildId];
+                bool replaced = false;
+                for (auto &existing : channels) {
+                    if (existing && existing->id == updated->id) {
+                        existing = updated;
+                        replaced = true;
+                        break;
+                    }
+                }
+
+                if (!replaced) {
+                    channels.push_back(updated);
+                }
+            });
+
+            Logger::debug("Updated guild channel " + updated->id + " for guild " + updated->guildId);
+            return;
+        }
+
+        if (channel->isDM()) {
+            auto *dmChannel = dynamic_cast<DMChannel *>(channel.get());
+            if (!dmChannel) {
+                Logger::warn("CHANNEL_UPDATE invalid DM payload");
+                return;
+            }
+
+            std::shared_ptr<DMChannel> updated(static_cast<DMChannel *>(channel.release()));
+            Store::get().update([updated](AppState &state) {
+                bool replaced = false;
+                for (auto &existing : state.privateChannels) {
+                    if (existing && existing->id == updated->id) {
+                        existing = updated;
+                        replaced = true;
+                        break;
+                    }
+                }
+
+                if (!replaced) {
+                    state.privateChannels.push_back(updated);
+                }
+            });
+
+            Logger::debug("Updated DM channel " + updated->id);
+            return;
+        }
+
+        Logger::warn("CHANNEL_UPDATE for unsupported channel type");
+    } catch (const std::exception &e) {
+        Logger::error("Failed to handle CHANNEL_UPDATE: " + std::string(e.what()));
+    }
+}
+
 void Gateway::handleUserSettingsProtoUpdate(const Json &data) {
     std::string base64Proto;
     if (data.contains("settings") && data["settings"].is_object()) {
@@ -1429,7 +1525,7 @@ void Gateway::logMessage(const Json &msg) {
 }
 
 void Gateway::logUnhandledEvent(const std::string &eventType) {
-    Logger::debug("Unhandled event type: " + eventType);
+    Logger::info("Unhandled event type: " + eventType);
 
     try {
         std::filesystem::create_directories("discove");

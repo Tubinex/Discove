@@ -44,7 +44,9 @@ class TextChannelView : public Fl_Group {
      * @brief Set callback for sending messages
      * @param callback Callback function
      */
-    void setOnSendMessage(std::function<void(const std::string &)> callback) { m_onSendMessage = callback; }
+    void setOnSendMessage(std::function<void(const std::string &, const std::string &)> callback) {
+        m_onSendMessage = callback;
+    }
 
   private:
     void drawHeader();
@@ -61,6 +63,7 @@ class TextChannelView : public Fl_Group {
     bool getEmojiButtonRect(int &outX, int &outY, int &outSize) const;
     bool getInputButtonRect(int index, int &outX, int &outY, int &outSize) const;
     bool getPlusButtonRect(int &outX, int &outY, int &outSize) const;
+    void enqueuePendingMessage(const std::string &content, const std::string &nonce);
 
     struct AvatarHitbox {
         int x = 0;
@@ -93,12 +96,14 @@ class TextChannelView : public Fl_Group {
     bool m_welcomeVisible = false;
     bool m_canSendMessages = true;
     std::vector<Message> m_messages;
+    std::vector<Message> m_pendingMessages;
     Fl_Scroll *m_scrollArea = nullptr;
     Fl_Input *m_messageInput = nullptr;
     int m_messagesScrollOffset = 0;
     int m_messagesContentHeight = 0;
     int m_messagesViewHeight = 0;
-    std::function<void(const std::string &)> m_onSendMessage;
+    std::function<void(const std::string &, const std::string &)> m_onSendMessage;
+    bool m_inputFocused = false;
     bool m_emojiAtlasesLoaded = false;
     size_t m_emojiFrameIndex = 0;
     int m_hoveredInputButton = -1;

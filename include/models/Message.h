@@ -121,9 +121,10 @@ class Message {
     std::vector<Embed> embeds;
     std::vector<Reaction> reactions;
     std::optional<std::string> nonce;
+    bool isPending = false;
     bool pinned = false;
     std::optional<std::string> webhookId;
-    MessageType type;
+    MessageType type = MessageType::DEFAULT;
     std::optional<std::string> applicationId;
     std::optional<std::string> referencedMessageId;
     std::optional<std::string> guildId;

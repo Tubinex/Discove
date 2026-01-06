@@ -20,6 +20,7 @@
 #include <chrono>
 #include <cstring>
 #include <iomanip>
+#include <random>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -32,6 +33,7 @@ constexpr int kInputPlusButtonRadius = 6;
 constexpr int kInputPlusIconSize = 18;
 constexpr int kInputPlusButtonPadding = 12;
 constexpr int kInputPlaceholderPadding = 12;
+constexpr int kInputTextHeight = 28;
 constexpr int kInputIconSize = 20;
 constexpr int kInputIconButtonSize = 34;
 constexpr int kInputIconButtonRadius = 6;
@@ -52,6 +54,24 @@ std::string trimSpaces(const std::string &text) {
     }
     size_t end = text.find_last_not_of(" \t\r\n");
     return text.substr(start, end - start + 1);
+}
+
+std::string makeNonce() {
+    using namespace std::chrono;
+    static std::mt19937 rng([]() {
+        std::random_device rd;
+        return std::mt19937(rd());
+    }());
+    static std::uniform_int_distribution<int> dist(0, 9999);
+
+    auto nowMs = duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
+    std::ostringstream nonce;
+    nonce << nowMs << std::setw(4) << std::setfill('0') << dist(rng);
+    std::string value = nonce.str();
+    if (value.size() > 25) {
+        value.resize(25);
+    }
+    return value;
 }
 
 std::string collapseWhitespace(const std::string &text) {
@@ -342,6 +362,43 @@ void tintEmojiFrames(std::vector<std::unique_ptr<Fl_RGB_Image>> &frames, Fl_Colo
 TextChannelView::TextChannelView(int x, int y, int w, int h, const char *label) : Fl_Group(x, y, w, h, label) {
     box(FL_NO_BOX);
     clip_children(1);
+    begin();
+    m_messageInput = new Fl_Input(0, 0, 0, 0);
+    m_messageInput->box(FL_NO_BOX);
+    m_messageInput->color(ThemeColors::BG_TERTIARY);
+    m_messageInput->textfont(FontLoader::Fonts::INTER_REGULAR);
+    m_messageInput->textsize(15);
+    m_messageInput->textcolor(ThemeColors::TEXT_NORMAL);
+    m_messageInput->cursor_color(ThemeColors::TEXT_NORMAL);
+    m_messageInput->selection_color(ThemeColors::BTN_PRIMARY);
+    m_messageInput->when(FL_WHEN_ENTER_KEY_ALWAYS);
+    m_messageInput->callback(
+        [](Fl_Widget *, void *data) {
+            auto *view = static_cast<TextChannelView *>(data);
+            if (!view || !view->m_messageInput) {
+                return;
+            }
+
+            const char *raw = view->m_messageInput->value();
+            if (!raw) {
+                return;
+            }
+
+            std::string message = trimSpaces(raw);
+            if (message.empty()) {
+                return;
+            }
+
+            if (view->m_onSendMessage) {
+                std::string nonce = makeNonce();
+                view->enqueuePendingMessage(message, nonce);
+                view->m_onSendMessage(message, nonce);
+                view->m_messageInput->value("");
+                view->m_messageInput->redraw();
+            }
+        },
+        this);
+    m_messageInput->hide();
     end();
 
     m_storeListenerId = Store::get().subscribe([this](const AppState &state) {
@@ -382,10 +439,22 @@ TextChannelView::TextChannelView(int x, int y, int w, int h, const char *label) 
             }
 
             m_messages = newMessages;
+            auto pendingIt = state.pendingChannelMessages.find(m_channelId);
+            if (pendingIt != state.pendingChannelMessages.end()) {
+                m_pendingMessages = pendingIt->second;
+            } else {
+                m_pendingMessages.clear();
+            }
             m_messagesChanged = true;
             redraw();
         } else {
             m_messages.clear();
+            auto pendingIt = state.pendingChannelMessages.find(m_channelId);
+            if (pendingIt != state.pendingChannelMessages.end()) {
+                m_pendingMessages = pendingIt->second;
+            } else {
+                m_pendingMessages.clear();
+            }
             m_messagesChanged = true;
             redraw();
         }
@@ -418,7 +487,7 @@ void TextChannelView::draw() {
 
     fl_push_clip(x(), contentY, w(), contentH);
 
-    if (m_welcomeVisible && m_messages.empty()) {
+    if (m_welcomeVisible && m_messages.empty() && m_pendingMessages.empty()) {
         m_messagesScrollOffset = 0;
         m_messagesContentHeight = 0;
         m_messagesViewHeight = 0;
@@ -434,12 +503,59 @@ void TextChannelView::draw() {
     fl_pop_clip();
     fl_pop_clip();
 
+    if (m_messageInput) {
+        if (m_canSendMessages) {
+            if (!m_messageInput->visible()) {
+                m_messageInput->show();
+            }
+        } else if (m_messageInput->visible()) {
+            m_messageInput->hide();
+        }
+
+        if (!m_canSendMessages && m_inputFocused) {
+            m_inputFocused = false;
+            if (Fl::focus() == m_messageInput) {
+                Fl::focus(nullptr);
+            }
+        }
+
+        if (!m_inputFocused && Fl::focus() == m_messageInput) {
+            Fl::focus(nullptr);
+        }
+    }
+
     if (m_canSendMessages) {
         drawMessageInput();
+    }
+
+    if (m_messageInput && m_messageInput->visible()) {
+        draw_child(*m_messageInput);
     }
 }
 
 int TextChannelView::handle(int event) {
+    if (event == FL_PUSH && m_messageInput && m_messageInput->visible()) {
+        int mx = Fl::event_x();
+        int my = Fl::event_y();
+        bool inInput = mx >= m_messageInput->x() && mx < m_messageInput->x() + m_messageInput->w() &&
+                       my >= m_messageInput->y() && my < m_messageInput->y() + m_messageInput->h();
+
+        if (inInput) {
+            m_inputFocused = true;
+            Fl::focus(m_messageInput);
+            redraw();
+            return m_messageInput->handle(event);
+        }
+
+        if (m_inputFocused) {
+            m_inputFocused = false;
+            if (Fl::focus() == m_messageInput) {
+                Fl::focus(nullptr);
+            }
+            redraw();
+        }
+    }
+
     int handled = Fl_Group::handle(event);
 
     switch (event) {
@@ -565,6 +681,7 @@ void TextChannelView::setChannel(const std::string &channelId, const std::string
     m_previousItemYPositions.clear();
     m_previousItemHeights.clear();
     m_previousTotalHeight = 0;
+    m_pendingMessages.clear();
     if (!m_hoveredAvatarKey.empty()) {
         m_hoveredAvatarKey.clear();
         MessageWidget::setHoveredAvatarKey("");
@@ -677,12 +794,26 @@ void TextChannelView::drawMessages() {
     }
 
     std::vector<const Message *> ordered;
-    ordered.reserve(m_messages.size());
+    ordered.reserve(m_messages.size() + m_pendingMessages.size());
     std::unordered_map<std::string, const Message *> messageById;
-    messageById.reserve(m_messages.size());
+    messageById.reserve(m_messages.size() + m_pendingMessages.size());
+    std::unordered_set<std::string> realNonces;
+    realNonces.reserve(m_messages.size());
+
     for (const auto &msg : m_messages) {
         ordered.push_back(&msg);
         messageById[msg.id] = &msg;
+        if (msg.nonce.has_value()) {
+            realNonces.insert(*msg.nonce);
+        }
+    }
+
+    for (const auto &pending : m_pendingMessages) {
+        if (pending.nonce.has_value() && realNonces.find(*pending.nonce) != realNonces.end()) {
+            continue;
+        }
+        ordered.push_back(&pending);
+        messageById[pending.id] = &pending;
     }
 
     std::stable_sort(ordered.begin(), ordered.end(),
@@ -826,9 +957,7 @@ void TextChannelView::drawMessages() {
             if (!info.needsSeparator) {
                 const auto &prev = messageInfos[i - 1];
                 if (info.grouped) {
-                    bool prevHasExtras = hasVisualExtras(prev.msg);
-                    bool currentHasExtras = hasVisualExtras(info.msg);
-                    spacing = (prevHasExtras || currentHasExtras) ? MESSAGE_GROUP_SPACING : 0;
+                    spacing = 0;
                 } else if (isSystem && prev.msg && prev.msg->isSystemMessage()) {
                     spacing = kSystemMessageSpacing;
                 } else {
@@ -1209,12 +1338,33 @@ void TextChannelView::drawMessageInput() {
         plusIcon->draw(plusX, plusY);
     }
 
-    std::string placeholder = "Message #" + m_channelName;
-    fl_color(ThemeColors::TEXT_MUTED);
-    fl_font(FontLoader::Fonts::INTER_REGULAR, 15);
-    int placeholderX = buttonX + kInputPlusButtonSize + kInputPlaceholderPadding;
-    int placeholderY = bubbleY + bubbleH / 2 + 5;
-    fl_draw(placeholder.c_str(), placeholderX, placeholderY);
+    int inputX = buttonX + kInputPlusButtonSize + kInputPlaceholderPadding;
+    int inputTextY = bubbleY + (bubbleH - kInputTextHeight) / 2;
+    int inputRight = bubbleX + bubbleW - kInputIconRightPadding - (kInputIconButtonSize * 3) -
+                     (kInputIconSpacing * 2) - kInputIconSpacing;
+    int inputW = std::max(1, inputRight - inputX);
+
+    if (m_messageInput) {
+        m_messageInput->resize(inputX, inputTextY, inputW, kInputTextHeight);
+        m_messageInput->activate();
+    }
+
+    bool showPlaceholder = true;
+    if (m_messageInput) {
+        const char *value = m_messageInput->value();
+        bool hasText = value && value[0] != '\0';
+        bool hasFocus = (Fl::focus() == m_messageInput);
+        showPlaceholder = !hasText && !hasFocus;
+    }
+
+    if (showPlaceholder) {
+        std::string placeholder = "Message #" + m_channelName;
+        fl_color(ThemeColors::TEXT_MUTED);
+        fl_font(FontLoader::Fonts::INTER_REGULAR, 15);
+        int placeholderX = inputX;
+        int placeholderY = bubbleY + bubbleH / 2 + 5;
+        fl_draw(placeholder.c_str(), placeholderX, placeholderY);
+    }
 
     const int iconSize = kInputIconSize;
     const int iconButtonSize = kInputIconButtonSize;
@@ -1391,6 +1541,13 @@ void TextChannelView::loadMessagesFromStore() {
     } else {
         m_messages.clear();
     }
+
+    auto pendingIt = state.pendingChannelMessages.find(m_channelId);
+    if (pendingIt != state.pendingChannelMessages.end()) {
+        m_pendingMessages = pendingIt->second;
+    } else {
+        m_pendingMessages.clear();
+    }
 }
 
 void TextChannelView::loadMessages() {
@@ -1470,4 +1627,48 @@ void TextChannelView::updatePermissions() {
     uint64_t channelPermissions = PermissionUtils::computeChannelPermissions(
         userId, m_guildId, userRoleIds, targetChannel->permissionOverwrites, basePermissions);
     m_canSendMessages = PermissionUtils::hasPermission(channelPermissions, Permissions::SEND_MESSAGES);
+}
+
+void TextChannelView::enqueuePendingMessage(const std::string &content, const std::string &nonce) {
+    if (m_channelId.empty() || content.empty() || nonce.empty()) {
+        return;
+    }
+
+    auto snapshot = Store::get().snapshot();
+    if (!snapshot.currentUser.has_value()) {
+        return;
+    }
+
+    Message pending;
+    pending.id = "pending:" + nonce;
+    pending.channelId = m_channelId;
+    pending.content = content;
+    pending.timestamp = std::chrono::system_clock::now();
+    pending.nonce = nonce;
+    pending.isPending = true;
+    pending.type = MessageType::DEFAULT;
+    pending.authorId = snapshot.currentUser->id;
+    pending.authorUsername = snapshot.currentUser->username;
+    pending.authorGlobalName = snapshot.currentUser->globalName;
+    pending.authorDiscriminator = snapshot.currentUser->discriminator;
+    pending.authorAvatarHash = snapshot.currentUser->avatarHash;
+
+    if (!m_guildId.empty()) {
+        pending.guildId = m_guildId;
+        auto memberIt = snapshot.guildMembers.find(m_guildId);
+        if (memberIt != snapshot.guildMembers.end() && memberIt->second.userId == pending.authorId) {
+            pending.authorNickname = memberIt->second.nick;
+        }
+    }
+
+    m_shouldScrollToBottom = true;
+    Store::get().update([channelId = m_channelId, pending = std::move(pending)](AppState &state) mutable {
+        auto &pendingList = state.pendingChannelMessages[channelId];
+        auto it = std::find_if(pendingList.begin(), pendingList.end(), [&](const Message &msg) {
+            return msg.nonce.has_value() && msg.nonce == pending.nonce;
+        });
+        if (it == pendingList.end()) {
+            pendingList.push_back(std::move(pending));
+        }
+    });
 }

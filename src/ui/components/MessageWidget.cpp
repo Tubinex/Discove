@@ -28,6 +28,7 @@ constexpr int kAvatarSize = 40;
 constexpr int kAvatarMargin = 16;
 constexpr int kUsernameFontSize = 16;
 constexpr int kTimestampFontSize = 12;
+constexpr int kEditedFontSize = 12;
 constexpr int kContentFontSize = 16;
 constexpr int kHeaderTopPadding = -4;
 constexpr int kTimestampBaselineAdjust = 5;
@@ -1270,7 +1271,7 @@ std::vector<MessageWidget::InlineItem> tokenizeEmojiText(const std::string &text
     return tokens;
 }
 
-int drawInlineItem(const MessageWidget::InlineItem &item, int x, int baseline) {
+int drawInlineItem(const MessageWidget::InlineItem &item, int x, int baseline, bool useMuted) {
     if (item.kind == MessageWidget::InlineItem::Kind::Emoji) {
         int size = item.emojiSize > 0 ? item.emojiSize : kEmojiSize;
         int drawY = baseline - size + kEmojiBaselineOffset;
@@ -1285,7 +1286,7 @@ int drawInlineItem(const MessageWidget::InlineItem &item, int x, int baseline) {
         return 0;
     }
 
-    fl_color(item.color);
+    fl_color(useMuted ? ThemeColors::TEXT_MUTED : item.color);
     fl_font(item.font, item.size);
     fl_draw(item.text.c_str(), x, baseline);
 
@@ -1571,13 +1572,19 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
             maxEmojiSize = kEmojiOnlySize;
         }
 
+        bool hasContent = msg.content.find_first_not_of(" \t\r\n") != std::string::npos;
+        if (hasContent && msg.wasEdited()) {
+            auto editedTokens = tokenizeStyledText(" (edited)", FontLoader::Fonts::INTER_REGULAR, kEditedFontSize,
+                                                   ThemeColors::TEXT_MUTED);
+            tokens.insert(tokens.end(), editedTokens.begin(), editedTokens.end());
+        }
+
         fl_font(FontLoader::Fonts::INTER_REGULAR, kContentFontSize);
         layout.lines = wrapTokens(tokens, layout.contentWidth);
         layout.lineHeight = fl_height();
         layout.lineSpacing = kLineSpacing;
         lineAscent = layout.lineHeight - fl_descent();
 
-        bool hasContent = msg.content.find_first_not_of(" \t\r\n") != std::string::npos;
         if (!hasContent) {
             layout.lines.clear();
             contentHeight = 0;
@@ -1834,6 +1841,7 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
 }
 
 void MessageWidget::draw(const Message &msg, const Layout &layout, int originX, int originY, bool avatarHovered) {
+    const bool isPending = msg.isPending;
     if (layout.isSystem) {
         if (!layout.systemIconName.empty()) {
             auto *icon =
@@ -1847,7 +1855,7 @@ void MessageWidget::draw(const Message &msg, const Layout &layout, int originX, 
         for (const auto &line : layout.lines) {
             int cursorX = originX + layout.contentX;
             for (const auto &item : line.items) {
-                cursorX += drawInlineItem(item, cursorX, lineY);
+                cursorX += drawInlineItem(item, cursorX, lineY, isPending);
             }
             lineY += layout.lineHeight + layout.lineSpacing;
         }
@@ -1890,7 +1898,7 @@ void MessageWidget::draw(const Message &msg, const Layout &layout, int originX, 
         if (avatar && avatar->w() > 0 && avatar->h() > 0) {
             avatar->draw(originX + layout.avatarX, originY + layout.avatarY);
         } else {
-            fl_color(ThemeColors::TEXT_NORMAL);
+            fl_color(isPending ? ThemeColors::TEXT_MUTED : ThemeColors::TEXT_NORMAL);
             fl_font(FontLoader::Fonts::INTER_SEMIBOLD, 20);
             std::string initial = layout.username.empty() ? "U" : std::string(1, layout.username[0]);
             int textW = static_cast<int>(fl_width(initial.c_str()));
@@ -1899,7 +1907,7 @@ void MessageWidget::draw(const Message &msg, const Layout &layout, int originX, 
                     originY + layout.avatarY + (layout.avatarSize + textH) / 2 - fl_descent());
         }
 
-        fl_color(ThemeColors::TEXT_NORMAL);
+        fl_color(isPending ? ThemeColors::TEXT_MUTED : ThemeColors::TEXT_NORMAL);
         fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kUsernameFontSize);
         fl_draw(layout.username.c_str(), originX + layout.usernameX, originY + layout.headerBaseline);
 
@@ -1956,7 +1964,7 @@ void MessageWidget::draw(const Message &msg, const Layout &layout, int originX, 
         int replyY = originY + layout.replyBaseline;
         int cursorX = originX + layout.replyX;
         for (const auto &item : layout.replyItems) {
-            cursorX += drawInlineItem(item, cursorX, replyY);
+            cursorX += drawInlineItem(item, cursorX, replyY, isPending);
         }
     }
 
@@ -1964,7 +1972,7 @@ void MessageWidget::draw(const Message &msg, const Layout &layout, int originX, 
     for (const auto &line : layout.lines) {
         int cursorX = originX + layout.contentX;
         for (const auto &item : line.items) {
-            cursorX += drawInlineItem(item, cursorX, lineY);
+            cursorX += drawInlineItem(item, cursorX, lineY, isPending);
         }
         lineY += layout.lineHeight + layout.lineSpacing;
     }

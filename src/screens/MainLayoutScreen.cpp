@@ -1,5 +1,8 @@
 #include "screens/MainLayoutScreen.h"
 
+#include "net/APIClient.h"
+#include "data/Database.h"
+#include "models/Message.h"
 #include "router/Router.h"
 #include "state/AppState.h"
 #include "state/Store.h"
@@ -13,6 +16,26 @@
 #include <map>
 
 namespace {
+void removePendingMessage(AppState &state, const std::string &channelId, const std::string &nonce) {
+    if (channelId.empty() || nonce.empty()) {
+        return;
+    }
+
+    auto pendingIt = state.pendingChannelMessages.find(channelId);
+    if (pendingIt == state.pendingChannelMessages.end()) {
+        return;
+    }
+
+    auto &pending = pendingIt->second;
+    pending.erase(
+        std::remove_if(pending.begin(), pending.end(),
+                       [&](const Message &msg) { return msg.nonce.has_value() && msg.nonce.value() == nonce; }),
+        pending.end());
+    if (pending.empty()) {
+        state.pendingChannelMessages.erase(pendingIt);
+    }
+}
+
 bool isSelectableTextChannel(ChannelType type) {
     switch (type) {
     case ChannelType::GUILD_TEXT:
@@ -306,6 +329,39 @@ void MainLayoutScreen::createDMChannelView(const std::string &dmId) {
     auto *channelView =
         new TextChannelView(GUILD_BAR_WIDTH + SIDEBAR_WIDTH, 0, w() - GUILD_BAR_WIDTH - SIDEBAR_WIDTH, h());
     channelView->setChannel(dmId, channelName, "", true);
+    channelView->setOnSendMessage([channelId = dmId](const std::string &message, const std::string &nonce) {
+        if (channelId.empty()) {
+            return;
+        }
+        Discord::APIClient::get().sendChannelMessage(
+            channelId, message, nonce,
+            [channelId, nonce](const Discord::APIClient::Json &json) {
+                try {
+                    Message sent = Message::fromJson(json);
+                    Data::Database::get().insertMessage(sent);
+                    Store::get().update([&](AppState &state) {
+                        removePendingMessage(state, channelId, nonce);
+                        auto &messages = state.channelMessages[channelId];
+                        auto it =
+                            std::find_if(messages.begin(), messages.end(), [&](const Message &m) { return m.id == sent.id; });
+                        if (it == messages.end()) {
+                            messages.push_back(sent);
+                            std::sort(messages.begin(), messages.end(),
+                                      [](const Message &a, const Message &b) { return a.timestamp < b.timestamp; });
+                        }
+                    });
+                    Logger::debug("Message sent.");
+                } catch (const std::exception &e) {
+                    Logger::error("Failed to parse send response: " + std::string(e.what()));
+                    Store::get().update(
+                        [&](AppState &state) { removePendingMessage(state, channelId, nonce); });
+                }
+            },
+            [channelId, nonce](int code, const std::string &error) {
+                Logger::error("Failed to send message (" + std::to_string(code) + "): " + error);
+                Store::get().update([&](AppState &state) { removePendingMessage(state, channelId, nonce); });
+            });
+    });
 
     m_sidebar = sidebar;
     m_mainContent = channelView;
@@ -352,6 +408,39 @@ void MainLayoutScreen::createGuildChannelView(const std::string &guildId, const 
     auto *channelView =
         new TextChannelView(GUILD_BAR_WIDTH + SIDEBAR_WIDTH, 0, w() - GUILD_BAR_WIDTH - SIDEBAR_WIDTH, h());
     channelView->setChannel(channelId, channelName, guildId, isWelcomeVisible);
+    channelView->setOnSendMessage([channelId](const std::string &message, const std::string &nonce) {
+        if (channelId.empty()) {
+            return;
+        }
+        Discord::APIClient::get().sendChannelMessage(
+            channelId, message, nonce,
+            [channelId, nonce](const Discord::APIClient::Json &json) {
+                try {
+                    Message sent = Message::fromJson(json);
+                    Data::Database::get().insertMessage(sent);
+                    Store::get().update([&](AppState &state) {
+                        removePendingMessage(state, channelId, nonce);
+                        auto &messages = state.channelMessages[channelId];
+                        auto it =
+                            std::find_if(messages.begin(), messages.end(), [&](const Message &m) { return m.id == sent.id; });
+                        if (it == messages.end()) {
+                            messages.push_back(sent);
+                            std::sort(messages.begin(), messages.end(),
+                                      [](const Message &a, const Message &b) { return a.timestamp < b.timestamp; });
+                        }
+                    });
+                    Logger::debug("Message sent.");
+                } catch (const std::exception &e) {
+                    Logger::error("Failed to parse send response: " + std::string(e.what()));
+                    Store::get().update(
+                        [&](AppState &state) { removePendingMessage(state, channelId, nonce); });
+                }
+            },
+            [channelId, nonce](int code, const std::string &error) {
+                Logger::error("Failed to send message (" + std::to_string(code) + "): " + error);
+                Store::get().update([&](AppState &state) { removePendingMessage(state, channelId, nonce); });
+            });
+    });
 
     m_sidebar = sidebar;
     m_mainContent = channelView;

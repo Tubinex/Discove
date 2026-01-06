@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "state/Store.h"
 #include "ui/AnimationManager.h"
 
 class Fl_RGB_Image;
@@ -137,6 +138,7 @@ class GuildSidebar : public Fl_Group {
     std::string m_hoveredCategoryId;
     int m_scrollOffset = 0;
     std::function<void(const std::string &)> m_onChannelSelected;
+    Store::ListenerId m_storeListenerId = 0;
 
     static constexpr int CHANNEL_HEIGHT = 36;
     static constexpr int CATEGORY_HEIGHT = 40;

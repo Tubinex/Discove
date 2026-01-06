@@ -78,4 +78,5 @@ struct AppState {
     std::unordered_map<std::string, GuildMember> guildMembers;
     std::unordered_map<std::string, std::vector<Role>> guildRoles;
     std::unordered_map<std::string, std::vector<Message>> channelMessages;
+    std::unordered_map<std::string, std::vector<Message>> pendingChannelMessages;
 };

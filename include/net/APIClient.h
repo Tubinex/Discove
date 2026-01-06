@@ -25,6 +25,8 @@ class APIClient {
 
     void getChannelMessages(const std::string &channelId, int limit, const std::optional<std::string> &before,
                             SuccessCallback onSuccess, ErrorCallback onError);
+    void sendChannelMessage(const std::string &channelId, const std::string &content, const std::string &nonce,
+                            SuccessCallback onSuccess, ErrorCallback onError);
 
   private:
     APIClient() = default;
@@ -33,6 +35,8 @@ class APIClient {
     APIClient &operator=(const APIClient &) = delete;
 
     void performGet(const std::string &endpoint, SuccessCallback onSuccess, ErrorCallback onError);
+    void performPost(const std::string &endpoint, const std::string &body, SuccessCallback onSuccess,
+                     ErrorCallback onError);
 
     static size_t writeCallback(void *contents, size_t size, size_t nmemb, void *userp);
 
