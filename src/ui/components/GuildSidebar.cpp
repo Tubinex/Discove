@@ -696,13 +696,9 @@ bool GuildSidebar::updateBannerAnimation() {
     if (!m_bannerGif || !m_bannerGif->isAnimated())
         return false;
 
-    m_frameTimeAccumulated += AnimationManager::get().getFrameTime();
-    double requiredDelay = m_bannerGif->currentDelay() / 1000.0;
-
-    if (m_frameTimeAccumulated >= requiredDelay) {
+    bool advanced = m_bannerGif->advance(AnimationManager::get().getFrameTime());
+    if (advanced) {
         size_t currentFrame = m_bannerGif->getCurrentFrameIndex();
-        m_bannerGif->nextFrame();
-        m_frameTimeAccumulated = 0.0;
 
         if (currentFrame == m_bannerGif->frameCount() - 1 && m_bannerGif->getCurrentFrameIndex() == 0) {
             m_bannerHasPlayedOnce = true;

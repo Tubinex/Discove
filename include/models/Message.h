@@ -10,6 +10,7 @@
 #include "models/Attachment.h"
 #include "models/Embed.h"
 #include "models/Reaction.h"
+#include "models/StickerItem.h"
 
 /**
  * @brief Discord message types
@@ -120,6 +121,7 @@ class Message {
     std::vector<Attachment> attachments;
     std::vector<Embed> embeds;
     std::vector<Reaction> reactions;
+    std::vector<StickerItem> stickers;
     std::optional<std::string> nonce;
     bool isPending = false;
     bool pinned = false;

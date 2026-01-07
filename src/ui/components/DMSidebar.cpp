@@ -1054,12 +1054,8 @@ bool DMSidebar::updateAvatarAnimation(const std::string &key) {
         return false;
     }
 
-    state.frameTimeAccumulated += AnimationManager::get().getFrameTime();
-    double requiredDelay = state.animation->currentDelay() / 1000.0;
-
-    if (state.frameTimeAccumulated >= requiredDelay) {
-        state.animation->nextFrame();
-        state.frameTimeAccumulated = 0.0;
+    bool advanced = state.animation->advance(AnimationManager::get().getFrameTime());
+    if (advanced) {
         redraw();
     }
 
@@ -1107,7 +1103,7 @@ void DMSidebar::stopAvatarAnimation(const std::string &key) {
     state.running = false;
     state.frameTimeAccumulated = 0.0;
     if (state.animation) {
-        state.animation->setFrame(0);
+        state.animation->reset();
     }
 }
 

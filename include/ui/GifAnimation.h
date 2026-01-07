@@ -2,6 +2,7 @@
 
 #include <FL/Fl_Image.H>
 #include <FL/Fl_RGB_Image.H>
+#include <atomic>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -10,6 +11,9 @@
 class GifAnimation {
   public:
     enum class ScalingStrategy { None, Lazy, Eager };
+
+    static void setGlobalPaused(bool paused);
+    static bool isGlobalPaused();
 
     explicit GifAnimation(const std::string &filepath, ScalingStrategy strategy = ScalingStrategy::Lazy);
     ~GifAnimation();
@@ -32,6 +36,9 @@ class GifAnimation {
     void setFrame(size_t index);
     size_t getCurrentFrameIndex() const { return currentFrameIndex_; }
     size_t frameCount() const { return frames_.size(); }
+
+    bool advance(double deltaSeconds);
+    void reset();
 
     bool isValid() const { return !frames_.empty(); }
     bool isAnimated() const { return frames_.size() > 1; }
@@ -75,4 +82,7 @@ class GifAnimation {
     int lastScaledWidth_ = 0;
     int lastScaledHeight_ = 0;
     std::vector<std::unique_ptr<Fl_Image>> *lastScaledCache_ = nullptr;
+
+    double timeAccumulatorSeconds_ = 0.0;
+    static std::atomic<bool> s_globalPaused;
 };

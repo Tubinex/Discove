@@ -67,6 +67,12 @@ using GraphicsPtr = std::unique_ptr<Graphics, GdiplusDeleter<Graphics>>;
 #undef max
 #endif
 
+std::atomic<bool> GifAnimation::s_globalPaused{false};
+
+void GifAnimation::setGlobalPaused(bool paused) { s_globalPaused.store(paused); }
+
+bool GifAnimation::isGlobalPaused() { return s_globalPaused.load(); }
+
 GifAnimation::GifAnimation(const std::string &filepath, ScalingStrategy strategy) : scalingStrategy_(strategy) {
     if (!loadGif(filepath)) {
         if (lastError_.empty()) {
@@ -138,6 +144,41 @@ void GifAnimation::setFrame(size_t index) {
     if (index < frames_.size()) {
         currentFrameIndex_ = index;
     }
+}
+
+bool GifAnimation::advance(double deltaSeconds) {
+    if (GifAnimation::isGlobalPaused()) {
+        return false;
+    }
+
+    if (!isAnimated() || deltaSeconds <= 0.0) {
+        return false;
+    }
+
+    timeAccumulatorSeconds_ += deltaSeconds;
+    bool advanced = false;
+
+    double delaySeconds = static_cast<double>(currentDelay()) / 1000.0;
+    if (delaySeconds <= 0.0) {
+        delaySeconds = 0.1;
+    }
+
+    while (timeAccumulatorSeconds_ >= delaySeconds) {
+        timeAccumulatorSeconds_ -= delaySeconds;
+        nextFrame();
+        advanced = true;
+        delaySeconds = static_cast<double>(currentDelay()) / 1000.0;
+        if (delaySeconds <= 0.0) {
+            delaySeconds = 0.1;
+        }
+    }
+
+    return advanced;
+}
+
+void GifAnimation::reset() {
+    setFrame(0);
+    timeAccumulatorSeconds_ = 0.0;
 }
 
 void GifAnimation::setScalingStrategy(ScalingStrategy strategy) {

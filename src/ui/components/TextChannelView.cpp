@@ -3,6 +3,7 @@
 #include "data/Database.h"
 #include "net/APIClient.h"
 #include "state/Store.h"
+#include "ui/EmojiManager.h"
 #include "ui/IconManager.h"
 #include "ui/LayoutConstants.h"
 #include "ui/RoundedWidget.h"
@@ -146,14 +147,18 @@ int TextChannelView::estimateMessageHeight(const Message &msg, bool isGrouped) c
     constexpr int kAvatarSize = 40;
     constexpr int kAuthorHeight = 20;
     constexpr int kLineHeight = 20;
-    constexpr int kReactionHeight = 28;
+    constexpr int kReactionHeight = 34;
     constexpr int kReactionRowSpacing = 6;
-    constexpr int kReactionTopPadding = 10;
+    constexpr int kReactionTopPadding = 6;
     constexpr int kReactionBottomPadding = 6;
-    constexpr int kReactionAvgWidth = 60;
+    constexpr int kReactionAvgWidth = 84;
     constexpr int kReactionSpacing = 6;
     constexpr int kAttachmentHeight = 300;
     constexpr int kReplyPreviewHeight = 24;
+    constexpr int kStickerMaxSize = 192;
+    constexpr int kStickerSpacing = 8;
+    constexpr int kStickerTopPadding = 8;
+    constexpr int kStickerTopPaddingNoContent = 6;
 
     if (msg.isSystemMessage()) {
         return 32;
@@ -177,6 +182,21 @@ int TextChannelView::estimateMessageHeight(const Message &msg, bool isGrouped) c
 
     if (!msg.attachments.empty()) {
         height += kAttachmentHeight * static_cast<int>(msg.attachments.size());
+    }
+
+    if (!msg.stickers.empty()) {
+        int contentWidth = std::max(0, w() - 72);
+        int stickerSize = std::min(std::max(0, contentWidth), kStickerMaxSize);
+        if (stickerSize <= 0) {
+            stickerSize = kStickerMaxSize;
+        }
+
+        bool hasContent = (msg.content.find_first_not_of(" \t\r\n") != std::string::npos);
+        height += hasContent ? kStickerTopPadding : kStickerTopPaddingNoContent;
+        height += stickerSize * static_cast<int>(msg.stickers.size());
+        if (msg.stickers.size() > 1) {
+            height += kStickerSpacing * (static_cast<int>(msg.stickers.size()) - 1);
+        }
     }
 
     if (!msg.reactions.empty()) {
@@ -914,7 +934,8 @@ void TextChannelView::drawMessages() {
     m_separatorYPositions.reserve(messageInfos.size());
 
     auto hasVisualExtras = [](const Message *msg) {
-        return msg && (!msg->attachments.empty() || !msg->embeds.empty() || !msg->reactions.empty());
+        return msg &&
+               (!msg->attachments.empty() || !msg->embeds.empty() || !msg->reactions.empty() || !msg->stickers.empty());
     };
 
     std::vector<std::string> messageIds;
@@ -946,8 +967,10 @@ void TextChannelView::drawMessages() {
             const auto &nextInfo = messageInfos[i + 1];
             compactBottom = nextInfo.grouped;
             if (compactBottom) {
-                bool currentHasExtras = !info.msg->attachments.empty() || !info.msg->reactions.empty();
-                bool nextHasExtras = nextInfo.msg && (!nextInfo.msg->attachments.empty() || !nextInfo.msg->reactions.empty());
+                bool currentHasExtras =
+                    !info.msg->attachments.empty() || !info.msg->reactions.empty() || !info.msg->stickers.empty();
+                bool nextHasExtras = nextInfo.msg && (!nextInfo.msg->attachments.empty() || !nextInfo.msg->reactions.empty() ||
+                                                     !nextInfo.msg->stickers.empty());
                 compactBottom = !currentHasExtras && !nextHasExtras;
             }
         }
@@ -1066,8 +1089,10 @@ void TextChannelView::drawMessages() {
             const auto &nextInfo = messageInfos[i + 1];
             compactBottom = nextInfo.grouped;
             if (compactBottom) {
-                bool currentHasExtras = !info.msg->attachments.empty() || !info.msg->reactions.empty();
-                bool nextHasExtras = nextInfo.msg && (!nextInfo.msg->attachments.empty() || !nextInfo.msg->reactions.empty());
+                bool currentHasExtras =
+                    !info.msg->attachments.empty() || !info.msg->reactions.empty() || !info.msg->stickers.empty();
+                bool nextHasExtras = nextInfo.msg && (!nextInfo.msg->attachments.empty() || !nextInfo.msg->reactions.empty() ||
+                                                     !nextInfo.msg->stickers.empty());
                 compactBottom = !currentHasExtras && !nextHasExtras;
             }
         }
@@ -1136,6 +1161,7 @@ void TextChannelView::drawMessages() {
 
     std::unordered_set<std::string> keepAvatarKeys;
     std::unordered_set<std::string> keepAnimatedAvatarKeys;
+    std::unordered_set<std::string> keepStickerKeys;
     std::unordered_set<std::string> keepAttachmentKeys;
     std::unordered_set<std::string> keepEmojiKeys;
     for (auto &entry : entries) {
@@ -1177,6 +1203,12 @@ void TextChannelView::drawMessages() {
                     }
                 }
 
+                for (const auto &stickerLayout : entry.layout.stickers) {
+                    if (!stickerLayout.cacheKey.empty()) {
+                        keepStickerKeys.insert(stickerLayout.cacheKey);
+                    }
+                }
+
                 for (const auto &line : entry.layout.lines) {
                     for (const auto &item : line.items) {
                         if (item.kind == MessageWidget::InlineItem::Kind::Emoji && !item.emojiCacheKey.empty()) {
@@ -1195,7 +1227,8 @@ void TextChannelView::drawMessages() {
 
                 if (!entry.layout.isSystem && !entry.layout.attachments.empty() && !entry.msg->attachments.empty()) {
                     int attachmentsTop =
-                        messageY + entry.layout.contentTop + entry.layout.contentHeight + entry.layout.attachmentsTopPadding;
+                        messageY + entry.layout.contentTop + entry.layout.contentHeight + entry.layout.stickersHeight +
+                        entry.layout.attachmentsTopPadding;
                     size_t count = std::min(entry.layout.attachments.size(), entry.msg->attachments.size());
 
                     for (size_t i = 0; i < count; ++i) {
@@ -1225,8 +1258,12 @@ void TextChannelView::drawMessages() {
 
     MessageWidget::pruneAvatarCache(keepAvatarKeys);
     MessageWidget::pruneAnimatedAvatarCache(keepAnimatedAvatarKeys);
+    MessageWidget::pruneAnimatedEmojiCache(keepEmojiKeys);
+    MessageWidget::pruneStickerCache(keepStickerKeys);
+    MessageWidget::pruneAnimatedStickerCache(keepStickerKeys);
     MessageWidget::pruneAttachmentCache(keepAttachmentKeys);
     MessageWidget::pruneEmojiCache(keepEmojiKeys);
+    EmojiManager::pruneCache(keepEmojiKeys);
 
     if (!m_hoveredAvatarMessageId.empty()) {
         bool stillVisible =

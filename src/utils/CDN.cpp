@@ -125,6 +125,27 @@ std::string getStickerUrl(const std::string &stickerId) {
     return url.str();
 }
 
+std::string getStickerUrl(const std::string &stickerId, int formatType) {
+    std::string ext = ".png";
+    switch (formatType) {
+    case 4:
+        ext = ".gif";
+        break;
+    case 3:
+        ext = ".json";
+        break;
+    case 1:
+    case 2:
+    default:
+        ext = ".png";
+        break;
+    }
+
+    std::ostringstream url;
+    url << CDN_BASE << "/stickers/" << stickerId << ext;
+    return url.str();
+}
+
 std::string getAvatarDecorationUrl(const std::string &assetHash) {
     std::ostringstream url;
     url << CDN_BASE << "/avatar-decoration-presets/" << assetHash << ".png";

@@ -114,6 +114,12 @@ Message Message::fromJson(const nlohmann::json &j) {
         }
     }
 
+    if (j.contains("sticker_items") && j["sticker_items"].is_array()) {
+        for (const auto &stickerJson : j["sticker_items"]) {
+            message.stickers.push_back(StickerItem::fromJson(stickerJson));
+        }
+    }
+
     if (j.contains("nonce") && !j["nonce"].is_null()) {
         if (j["nonce"].is_string()) {
             message.nonce = j["nonce"].get<std::string>();

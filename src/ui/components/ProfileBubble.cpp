@@ -657,12 +657,8 @@ bool ProfileBubble::updateAvatarAnimation() {
         return true;
     }
 
-    m_avatarFrameTimeAccumulated += AnimationManager::get().getFrameTime();
-    double requiredDelay = m_avatarGif->currentDelay() / 1000.0;
-
-    if (m_avatarFrameTimeAccumulated >= requiredDelay) {
-        m_avatarGif->nextFrame();
-        m_avatarFrameTimeAccumulated = 0.0;
+    bool advanced = m_avatarGif->advance(AnimationManager::get().getFrameTime());
+    if (advanced) {
         if (visible_r()) {
             int bubbleH = h() - (BUBBLE_MARGIN * 2);
             int avatarX = x() + BUBBLE_MARGIN + (bubbleH - AVATAR_SIZE) / 2;
@@ -684,12 +680,8 @@ bool ProfileBubble::updateEmojiAnimation() {
         return true;
     }
 
-    m_emojiFrameTimeAccumulated += AnimationManager::get().getFrameTime();
-    double requiredDelay = m_emojiGif->currentDelay() / 1000.0;
-
-    if (m_emojiFrameTimeAccumulated >= requiredDelay) {
-        m_emojiGif->nextFrame();
-        m_emojiFrameTimeAccumulated = 0.0;
+    bool advanced = m_emojiGif->advance(AnimationManager::get().getFrameTime());
+    if (advanced) {
         if (visible_r()) {
             damage(FL_DAMAGE_USER1, x(), y(), w(), h());
         }

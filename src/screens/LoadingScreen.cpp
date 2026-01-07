@@ -1,5 +1,6 @@
 #include "screens/LoadingScreen.h"
 
+#include "ui/AnimationManager.h"
 #include "ui/GifAnimation.h"
 #include "ui/Theme.h"
 #include <FL/Fl.H>
@@ -56,15 +57,29 @@ class GifBox : public Fl_Widget {
         }
 
         m_running = true;
-        scheduleNext();
+        m_animation.reset();
+        m_animationId = AnimationManager::get().registerAnimation([this]() {
+            if (!m_running) {
+                return false;
+            }
+            bool advanced = m_animation.advance(AnimationManager::get().getFrameTime());
+            if (advanced) {
+                redraw();
+            }
+            return m_running;
+        });
     }
 
     void stop() {
         if (!m_running) {
             return;
         }
-        Fl::remove_timeout(onTick, this);
+        if (m_animationId != 0) {
+            AnimationManager::get().unregisterAnimation(m_animationId);
+            m_animationId = 0;
+        }
         m_running = false;
+        m_animation.reset();
     }
 
     void draw() override {
@@ -134,27 +149,10 @@ class GifBox : public Fl_Widget {
         }
     }
 
-    static void onTick(void *data) {
-        auto *self = static_cast<GifBox *>(data);
-        if (self && self->m_running) {
-            self->advance();
-        }
-    }
-
-    void advance() {
-        m_animation.nextFrame();
-        redraw();
-        scheduleNext();
-    }
-
-    void scheduleNext() {
-        int delayMs = m_animation.currentDelay();
-        Fl::add_timeout(static_cast<double>(delayMs) / 1000.0, onTick, this);
-    }
-
     Fl_Color m_bgColor;
     GifAnimation m_animation;
     bool m_running = false;
+    AnimationManager::AnimationId m_animationId = 0;
     Fl_Offscreen m_offscreen = 0;
     int m_offscreenW = 0;
     int m_offscreenH = 0;

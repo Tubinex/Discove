@@ -13,6 +13,12 @@
 #include <FL/Fl_Box.H>
 #include <FL/Fl_Button.H>
 #include <FL/Fl_Double_Window.H>
+#include <FL/Fl_Image.H>
+
+#ifdef _WIN32
+#include <FL/x.H>
+#include <windows.h>
+#endif
 
 #include <string>
 
@@ -29,6 +35,8 @@
 #include "screens/SettingsScreen.h"
 #include "screens/UILibraryScreen.h"
 #include "state/Store.h"
+#include "ui/EmojiManager.h"
+#include "ui/GifAnimation.h"
 #include "ui/Theme.h"
 #include "utils/Fonts.h"
 #include "utils/Logger.h"
@@ -38,11 +46,89 @@
 const int INITIAL_WINDOW_WIDTH = 1280;
 const int INITIAL_WINDOW_HEIGHT = 720;
 
+namespace {
+Fl_Window *g_mainWindow = nullptr;
+
+bool shouldPauseAnimations() {
+    if (!g_mainWindow) {
+        return false;
+    }
+
+#ifdef _WIN32
+    HWND hwnd = fl_xid(g_mainWindow);
+    if (!hwnd) {
+        return false;
+    }
+
+    if (!IsWindowVisible(hwnd) || IsIconic(hwnd)) {
+        return true;
+    }
+
+    HWND fg = GetForegroundWindow();
+    if (!fg) {
+        return true;
+    }
+
+    DWORD fgPid = 0;
+    GetWindowThreadProcessId(fg, &fgPid);
+    DWORD ourPid = GetCurrentProcessId();
+    if (fgPid == ourPid) {
+        return false;
+    }
+
+    return true;
+#else
+    return !g_mainWindow->shown();
+#endif
+}
+
+void syncAnimationPauseState() { GifAnimation::setGlobalPaused(shouldPauseAnimations()); }
+
+void animationPausePoll(void *) {
+    syncAnimationPauseState();
+    Fl::repeat_timeout(0.25, animationPausePoll);
+}
+
+void scheduleAnimationPausePoll() {
+    static bool scheduled = false;
+    if (scheduled) {
+        return;
+    }
+    scheduled = true;
+
+    Fl::add_timeout(0.25, animationPausePoll);
+}
+} // namespace
+
+class AppWindow : public Fl_Double_Window {
+  public:
+    using Fl_Double_Window::Fl_Double_Window;
+
+    int handle(int event) override {
+        if (event == FL_ACTIVATE || event == FL_DEACTIVATE || event == FL_SHOW || event == FL_HIDE || event == FL_FOCUS ||
+            event == FL_UNFOCUS) {
+            syncAnimationPauseState();
+        }
+        return Fl_Double_Window::handle(event);
+    }
+};
+
 int main(int argc, char **argv) {
 
     Fl::lock();
 
-    Logger::setLevel(Logger::Level::DEBUG);
+    Fl_Image::RGB_scaling(FL_RGB_SCALING_BILINEAR);
+    Fl_Image::scaling_algorithm(FL_RGB_SCALING_BILINEAR);
+
+    Fl::add_handler([](int event) -> int {
+        if (event == FL_ACTIVATE || event == FL_DEACTIVATE || event == FL_SHOW || event == FL_HIDE || event == FL_FOCUS ||
+            event == FL_UNFOCUS) {
+            syncAnimationPauseState();
+        }
+        return 0;
+    });
+
+    Logger::setLevel(Logger::Level::INFO);
     Logger::info("Application started");
 
     if (!Data::Database::get().initialize()) {
@@ -59,7 +145,11 @@ int main(int argc, char **argv) {
         Logger::warn("Some fonts failed to load, using fallback fonts");
     }
 
-    Fl_Double_Window *window = new Fl_Double_Window(INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT, "Discove");
+    EmojiManager::initializeFromDefaultLocations();
+
+    AppWindow *window = new AppWindow(INITIAL_WINDOW_WIDTH, INITIAL_WINDOW_HEIGHT, "Discove");
+    g_mainWindow = window;
+    scheduleAnimationPausePoll();
 
     Router &router = Router::get();
     router.resize(0, 0, window->w(), window->h());
@@ -188,6 +278,7 @@ int main(int argc, char **argv) {
     window->resizable(&router);
     window->size_range(400, 300);
     window->show(argc, argv);
+    syncAnimationPauseState();
 
     return Fl::run();
 }

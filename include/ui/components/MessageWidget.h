@@ -24,6 +24,8 @@ class MessageWidget {
         bool isLink = false;
         bool underline = false;
         bool strikethrough = false;
+        bool preserveWhitespace = false;
+        bool isCodeBlock = false;
         std::string emojiUrl;
         std::string emojiCacheKey;
         int emojiSize = 0;
@@ -32,6 +34,7 @@ class MessageWidget {
     struct LayoutLine {
         std::vector<InlineItem> items;
         int width = 0;
+        bool isCodeBlock = false;
     };
 
     struct ReplyPreview {
@@ -51,6 +54,18 @@ class MessageWidget {
         int downloadXOffset = 0;
         int downloadYOffset = 0;
         int downloadSize = 0;
+    };
+
+    struct StickerLayout {
+        int width = 0;
+        int height = 0;
+        int xOffset = 0;
+        int yOffset = 0;
+        bool supported = false;
+        int formatType = 0;
+        std::string name;
+        std::string url;
+        std::string cacheKey;
     };
 
     struct ReactionLayout {
@@ -77,6 +92,8 @@ class MessageWidget {
         int contentBaseline = 0;
         int contentTop = 0;
         int contentHeight = 0;
+        int stickersHeight = 0;
+        int stickersTopPadding = 0;
         int attachmentsHeight = 0;
         int attachmentsTopPadding = 0;
         int reactionsTopPadding = 0;
@@ -108,6 +125,7 @@ class MessageWidget {
         Fl_Color systemIconColor = 0;
         std::vector<LayoutLine> lines;
         std::vector<InlineItem> replyItems;
+        std::vector<StickerLayout> stickers;
         std::vector<AttachmentLayout> attachments;
         std::vector<ReactionLayout> reactions;
     };
@@ -122,12 +140,15 @@ class MessageWidget {
     static void setHoveredAttachmentDownloadKey(const std::string &key);
     static void pruneAvatarCache(const std::unordered_set<std::string> &keepKeys);
     static void pruneAnimatedAvatarCache(const std::unordered_set<std::string> &keepKeys);
+    static void pruneAnimatedEmojiCache(const std::unordered_set<std::string> &keepKeys);
+    static void pruneStickerCache(const std::unordered_set<std::string> &keepKeys);
+    static void pruneAnimatedStickerCache(const std::unordered_set<std::string> &keepKeys);
     static void pruneAttachmentCache(const std::unordered_set<std::string> &keepKeys);
     static void pruneEmojiCache(const std::unordered_set<std::string> &keepKeys);
 
   private:
     static std::vector<InlineItem> tokenizeText(const std::string &text, Fl_Font font, int size, Fl_Color color);
     static std::vector<LayoutLine> wrapText(const std::string &text, int maxWidth);
-    static std::vector<LayoutLine> wrapTokens(const std::vector<InlineItem> &tokens, int maxWidth);
+    static std::vector<LayoutLine> wrapTokens(const std::vector<InlineItem> &tokens, int maxWidth, int codeBlockMaxWidth);
     static std::vector<InlineItem> splitLongToken(const InlineItem &token, int maxWidth);
 };

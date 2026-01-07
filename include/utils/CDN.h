@@ -160,6 +160,14 @@ std::string getChannelIconUrl(const std::string &channelId, const std::string &i
 std::string getStickerUrl(const std::string &stickerId);
 
 /**
+ * @brief Construct sticker URL with a known format type
+ * @param stickerId Sticker's snowflake ID
+ * @param formatType Sticker format type (1=PNG, 2=APNG, 3=LOTTIE, 4=GIF)
+ * @return CDN URL for sticker asset
+ */
+std::string getStickerUrl(const std::string &stickerId, int formatType);
+
+/**
  * @brief Construct avatar decoration URL
  * @param assetHash Avatar decoration asset hash
  * @return CDN URL for avatar decoration preset

@@ -388,6 +388,8 @@ void Gateway::receive(const std::string &text) {
                 {"MESSAGE_UPDATE", [](Gateway *gw, const Json &data) { gw->handleMessageUpdate(data); }},
                 {"MESSAGE_DELETE", [](Gateway *gw, const Json &data) { gw->handleMessageDelete(data); }},
                 {"MESSAGE_REACTION_ADD", [](Gateway *gw, const Json &data) { gw->handleMessageReactionAdd(data); }},
+                {"MESSAGE_REACTION_ADD_MANY",
+                 [](Gateway *gw, const Json &data) { gw->handleMessageReactionAddMany(data); }},
                 {"MESSAGE_REACTION_REMOVE",
                  [](Gateway *gw, const Json &data) { gw->handleMessageReactionRemove(data); }},
                 {"MESSAGE_REACTION_REMOVE_ALL",
@@ -1076,7 +1078,7 @@ void Gateway::handleMessageUpdate(const Json &data) {
                 }
 
                 if (data.contains("edited_timestamp") && data["edited_timestamp"].is_string()) {
-                    it->editedTimestamp = std::chrono::system_clock::now(); // Simplified
+                    it->editedTimestamp = std::chrono::system_clock::now();
                 }
 
                 if (data.contains("attachments") && data["attachments"].is_array()) {
@@ -1097,6 +1099,13 @@ void Gateway::handleMessageUpdate(const Json &data) {
                     it->reactions.clear();
                     for (const auto &reactionJson : data["reactions"]) {
                         it->reactions.push_back(Reaction::fromJson(reactionJson));
+                    }
+                }
+
+                if (data.contains("sticker_items") && data["sticker_items"].is_array()) {
+                    it->stickers.clear();
+                    for (const auto &stickerJson : data["sticker_items"]) {
+                        it->stickers.push_back(StickerItem::fromJson(stickerJson));
                     }
                 }
 
@@ -1221,6 +1230,152 @@ void Gateway::handleMessageReactionAdd(const Json &data) {
         });
     } catch (const std::exception &e) {
         Logger::error("Failed to handle MESSAGE_REACTION_ADD: " + std::string(e.what()));
+    }
+}
+
+void Gateway::handleMessageReactionAddMany(const Json &data) {
+    try {
+        if (!data.contains("message_id") || !data["message_id"].is_string()) {
+            Logger::warn("MESSAGE_REACTION_ADD_MANY missing message_id field");
+            return;
+        }
+
+        std::string messageId = data["message_id"].get<std::string>();
+        std::string channelId;
+
+        if (data.contains("channel_id") && data["channel_id"].is_string()) {
+            channelId = data["channel_id"].get<std::string>();
+        } else {
+            Logger::warn("MESSAGE_REACTION_ADD_MANY missing channel_id field");
+            return;
+        }
+
+        if (!data.contains("reactions") || !data["reactions"].is_array()) {
+            Logger::warn("MESSAGE_REACTION_ADD_MANY missing reactions array");
+            return;
+        }
+
+        std::optional<std::string> currentUserId;
+        {
+            AppState snapshot = Store::get().snapshot();
+            if (snapshot.currentUser.has_value()) {
+                currentUserId = snapshot.currentUser->id;
+            }
+        }
+
+        struct ReactionDelta {
+            std::string emojiId;
+            std::string emojiName;
+            bool emojiAnimated = false;
+            int deltaCount = 0;
+            bool me = false;
+        };
+
+        std::vector<ReactionDelta> deltas;
+        for (const auto &reactionJson : data["reactions"]) {
+            if (!reactionJson.is_object()) {
+                continue;
+            }
+
+            if (!reactionJson.contains("emoji") || !reactionJson["emoji"].is_object()) {
+                continue;
+            }
+
+            const auto &emojiData = reactionJson["emoji"];
+            ReactionDelta delta;
+
+            if (emojiData.contains("id") && !emojiData["id"].is_null()) {
+                delta.emojiId = emojiData["id"].get<std::string>();
+            }
+            if (emojiData.contains("name") && !emojiData["name"].is_null()) {
+                delta.emojiName = emojiData["name"].get<std::string>();
+            }
+            if (emojiData.contains("animated") && !emojiData["animated"].is_null()) {
+                delta.emojiAnimated = emojiData["animated"].get<bool>();
+            }
+
+            auto applyUsers = [&](const Json &arr) {
+                if (!arr.is_array()) {
+                    return;
+                }
+                int addCount = static_cast<int>(arr.size());
+                if (addCount <= 0) {
+                    return;
+                }
+                delta.deltaCount = (std::max)(delta.deltaCount, addCount);
+
+                if (currentUserId.has_value()) {
+                    for (const auto &userIdJson : arr) {
+                        if (userIdJson.is_string() && userIdJson.get<std::string>() == *currentUserId) {
+                            delta.me = true;
+                            break;
+                        }
+                    }
+                }
+            };
+
+            if (reactionJson.contains("users")) {
+                applyUsers(reactionJson["users"]);
+            } else if (reactionJson.contains("user_ids")) {
+                applyUsers(reactionJson["user_ids"]);
+            } else if (reactionJson.contains("user_id") && reactionJson["user_id"].is_string()) {
+                delta.deltaCount = (std::max)(delta.deltaCount, 1);
+                if (currentUserId.has_value() && reactionJson["user_id"].get<std::string>() == *currentUserId) {
+                    delta.me = true;
+                }
+            } else {
+                delta.deltaCount = (std::max)(delta.deltaCount, 1);
+            }
+
+            if (delta.deltaCount <= 0) {
+                continue;
+            }
+            if (delta.emojiId.empty() && delta.emojiName.empty()) {
+                continue;
+            }
+
+            deltas.push_back(std::move(delta));
+        }
+
+        if (deltas.empty()) {
+            return;
+        }
+
+        Store::get().update([&](AppState &state) {
+            auto &messages = state.channelMessages[channelId];
+            auto it =
+                std::find_if(messages.begin(), messages.end(), [&](const Message &m) { return m.id == messageId; });
+
+            if (it == messages.end()) {
+                return;
+            }
+
+            for (const auto &delta : deltas) {
+                auto reactionIt = std::find_if(it->reactions.begin(), it->reactions.end(), [&](const Reaction &r) {
+                    return r.emojiId == delta.emojiId && r.emojiName == delta.emojiName;
+                });
+
+                if (reactionIt != it->reactions.end()) {
+                    reactionIt->count += delta.deltaCount;
+                    if (delta.me) {
+                        reactionIt->me = true;
+                    }
+                } else {
+                    Reaction newReaction;
+                    newReaction.emojiId = delta.emojiId;
+                    newReaction.emojiName = delta.emojiName;
+                    newReaction.emojiAnimated = delta.emojiAnimated;
+                    newReaction.count = delta.deltaCount;
+                    newReaction.me = delta.me;
+                    it->reactions.push_back(newReaction);
+                }
+            }
+
+            Data::Database::get().updateMessage(*it);
+            Logger::debug("Added reactions (many) to message " + messageId + " in channel " + channelId);
+        });
+    } catch (const std::exception &e) {
+        Logger::error("Failed to handle MESSAGE_REACTION_ADD_MANY: " + std::string(e.what()));
     }
 }
 

@@ -244,16 +244,9 @@ bool GuildIcon::updateAnimation() {
         return true;
     }
 
-    frameTimeAccumulated_ += AnimationManager::get().getFrameTime();
-    double requiredDelay = gifAnimation_->currentDelay() / 1000.0;
-
-    if (frameTimeAccumulated_ >= requiredDelay) {
-        gifAnimation_->nextFrame();
-        frameTimeAccumulated_ = 0.0;
-
-        if (visible_r()) {
-            redraw();
-        }
+    bool advanced = gifAnimation_->advance(AnimationManager::get().getFrameTime());
+    if (advanced && visible_r()) {
+        redraw();
     }
 
     return true;

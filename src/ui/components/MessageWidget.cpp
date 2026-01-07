@@ -1,11 +1,13 @@
 #include "ui/components/MessageWidget.h"
 
 #include "ui/AnimationManager.h"
+#include "ui/EmojiManager.h"
 #include "ui/GifAnimation.h"
 #include "ui/IconManager.h"
 #include "ui/RoundedWidget.h"
 #include "ui/Theme.h"
 #include "utils/Fonts.h"
+#include "utils/CDN.h"
 #include "utils/Images.h"
 
 #include <FL/fl_draw.H>
@@ -77,17 +79,29 @@ constexpr int kEmojiSize = 22;
 constexpr int kEmojiOnlySize = 48;
 constexpr int kEmojiRequestSize = 48;
 constexpr int kEmojiBaselineOffset = 3;
-constexpr int kReactionHeight = 28;
-constexpr int kReactionCornerRadius = 6;
-constexpr int kReactionEmojiSize = 16;
-constexpr int kReactionEmojiFontSize = 14;
-constexpr int kReactionFontSize = 12;
-constexpr int kReactionPaddingX = 8;
+constexpr int kCodeBlockPaddingX = 10;
+constexpr int kCodeBlockPaddingY = 10;
+constexpr int kCodeBlockOuterPaddingY = 6;
+constexpr int kCodeBlockRadius = 4;
+constexpr int kCodeBlockMaxWidthPx = 850;
+constexpr int kCodeBlockLineSpacing = 2;
+constexpr Fl_Color kCodeBlockBg = 0x1f1f24FF;
+constexpr Fl_Color kCodeBlockBorder = ThemeColors::BORDER_PRIMARY;
+constexpr int kStickerTopPadding = 8;
+constexpr int kStickerTopPaddingNoContent = 6;
+constexpr int kStickerSpacing = 8;
+constexpr int kStickerMaxSize = 192;
+constexpr int kReactionHeight = 34;
+constexpr int kReactionCornerRadius = 9;
+constexpr int kReactionEmojiSize = 20;
+constexpr int kReactionEmojiFontSize = 16;
+constexpr int kReactionFontSize = 14;
+constexpr int kReactionPaddingX = 12;
 constexpr int kReactionSpacing = 6;
 constexpr int kReactionRowSpacing = 6;
-constexpr int kReactionEmojiGap = 6;
-constexpr int kReactionTopPadding = 10;
-constexpr int kReactionTopPaddingNoContent = 8;
+constexpr int kReactionEmojiGap = 8;
+constexpr int kReactionTopPadding = 6;
+constexpr int kReactionTopPaddingNoContent = 5;
 constexpr int kReactionBottomPadding = 6;
 constexpr Fl_Color kReactionBg = 0x242428FF;
 constexpr Fl_Color kReactionTextColor = ThemeColors::TEXT_NORMAL;
@@ -99,11 +113,33 @@ namespace {
 std::unordered_map<std::string, std::unique_ptr<Fl_RGB_Image>> avatar_cache;
 std::unordered_set<std::string> avatar_pending;
 
+size_t utf8CharLength(unsigned char lead) {
+    if (lead < 0x80) {
+        return 1;
+    }
+    if ((lead >> 5) == 0x6) {
+        return 2;
+    }
+    if ((lead >> 4) == 0xE) {
+        return 3;
+    }
+    if ((lead >> 3) == 0x1E) {
+        return 4;
+    }
+    return 1;
+}
+
 struct AnimatedAvatarState {
     std::unique_ptr<GifAnimation> animation;
     std::vector<std::unique_ptr<Fl_RGB_Image>> frames;
     AnimationManager::AnimationId animationId = 0;
     double frameTimeAccumulated = 0.0;
+    bool running = false;
+};
+
+struct AnimatedMediaState {
+    std::unique_ptr<GifAnimation> animation;
+    AnimationManager::AnimationId animationId = 0;
     bool running = false;
 };
 
@@ -170,15 +206,12 @@ bool updateAvatarAnimation(const std::string &key) {
         state.running = false;
         state.animationId = 0;
         state.frameTimeAccumulated = 0.0;
-        state.animation->setFrame(0);
+        state.animation->reset();
         return false;
     }
 
-    state.frameTimeAccumulated += AnimationManager::get().getFrameTime();
-    double requiredDelay = state.animation->currentDelay() / 1000.0;
-    if (state.frameTimeAccumulated >= requiredDelay) {
-        state.animation->nextFrame();
-        state.frameTimeAccumulated = 0.0;
+    bool advanced = state.animation->advance(AnimationManager::get().getFrameTime());
+    if (advanced) {
         Fl::redraw();
     }
 
@@ -219,8 +252,118 @@ void stopAvatarAnimation(const std::string &key) {
     state.running = false;
     state.frameTimeAccumulated = 0.0;
     if (state.animation) {
-        state.animation->setFrame(0);
+        state.animation->reset();
     }
+}
+
+std::unordered_map<std::string, AnimatedMediaState> emoji_gif_cache;
+std::unordered_set<std::string> emoji_gif_pending;
+
+bool updateEmojiAnimation(const std::string &key) {
+    auto it = emoji_gif_cache.find(key);
+    if (it == emoji_gif_cache.end()) {
+        return false;
+    }
+
+    auto &state = it->second;
+    if (!state.running || !state.animation || !state.animation->isAnimated()) {
+        state.running = false;
+        state.animationId = 0;
+        return false;
+    }
+
+    bool advanced = state.animation->advance(AnimationManager::get().getFrameTime());
+    if (advanced) {
+        Fl::redraw();
+    }
+
+    return true;
+}
+
+void startEmojiAnimation(const std::string &key) {
+    auto it = emoji_gif_cache.find(key);
+    if (it == emoji_gif_cache.end()) {
+        return;
+    }
+
+    auto &state = it->second;
+    if (state.running || !state.animation || !state.animation->isAnimated()) {
+        return;
+    }
+
+    state.running = true;
+    state.animationId = AnimationManager::get().registerAnimation([key]() { return updateEmojiAnimation(key); });
+}
+
+void stopEmojiAnimation(const std::string &key) {
+    auto it = emoji_gif_cache.find(key);
+    if (it == emoji_gif_cache.end()) {
+        return;
+    }
+
+    auto &state = it->second;
+    if (!state.running) {
+        return;
+    }
+
+    if (state.animationId != 0) {
+        AnimationManager::get().unregisterAnimation(state.animationId);
+        state.animationId = 0;
+    }
+
+    state.running = false;
+    if (state.animation) {
+        state.animation->reset();
+    }
+}
+
+bool ensureAnimatedEmoji(const std::string &gifUrl, int size) {
+    if (gifUrl.empty() || size <= 0) {
+        return false;
+    }
+
+    std::string cacheKey = buildEmojiCacheKey(gifUrl, size);
+    auto existing = emoji_gif_cache.find(cacheKey);
+    if (existing != emoji_gif_cache.end()) {
+        return existing->second.animation != nullptr;
+    }
+
+    if (emoji_gif_pending.find(cacheKey) != emoji_gif_pending.end()) {
+        return false;
+    }
+
+    emoji_gif_pending.insert(cacheKey);
+
+    Images::loadImageAsync(gifUrl, [gifUrl, cacheKey](Fl_RGB_Image *image) {
+        auto clearPending = [&]() { emoji_gif_pending.erase(cacheKey); };
+
+        if (!image) {
+            clearPending();
+            return;
+        }
+
+        std::string gifPath = Images::getCacheFilePath(gifUrl, "gif");
+        if (!std::filesystem::exists(gifPath)) {
+            clearPending();
+            return;
+        }
+
+        auto animation = std::make_unique<GifAnimation>(gifPath, GifAnimation::ScalingStrategy::Lazy);
+        if (!animation || !animation->isValid()) {
+            clearPending();
+            return;
+        }
+
+        AnimatedMediaState state;
+        state.animation = std::move(animation);
+        state.animation->reset();
+        emoji_gif_cache[cacheKey] = std::move(state);
+        Images::evictFromMemory(gifUrl);
+        clearPending();
+        Fl::redraw();
+    });
+
+    return false;
 }
 
 bool ensureAnimatedAvatar(const std::string &gifUrl, int size) {
@@ -326,6 +469,117 @@ Fl_RGB_Image *getAvatarImage(const Message &msg, int size) {
     return nullptr;
 }
 
+std::unordered_map<std::string, AnimatedMediaState> sticker_gif_cache;
+std::unordered_set<std::string> sticker_gif_pending;
+
+bool updateStickerAnimation(const std::string &key) {
+    auto it = sticker_gif_cache.find(key);
+    if (it == sticker_gif_cache.end()) {
+        return false;
+    }
+
+    auto &state = it->second;
+    if (!state.running || !state.animation || !state.animation->isAnimated()) {
+        state.running = false;
+        state.animationId = 0;
+        return false;
+    }
+
+    bool advanced = state.animation->advance(AnimationManager::get().getFrameTime());
+    if (advanced) {
+        Fl::redraw();
+    }
+
+    return true;
+}
+
+void startStickerAnimation(const std::string &key) {
+    auto it = sticker_gif_cache.find(key);
+    if (it == sticker_gif_cache.end()) {
+        return;
+    }
+
+    auto &state = it->second;
+    if (state.running || !state.animation || !state.animation->isAnimated()) {
+        return;
+    }
+
+    state.running = true;
+    state.animationId = AnimationManager::get().registerAnimation([key]() { return updateStickerAnimation(key); });
+}
+
+void stopStickerAnimation(const std::string &key) {
+    auto it = sticker_gif_cache.find(key);
+    if (it == sticker_gif_cache.end()) {
+        return;
+    }
+
+    auto &state = it->second;
+    if (!state.running) {
+        return;
+    }
+
+    if (state.animationId != 0) {
+        AnimationManager::get().unregisterAnimation(state.animationId);
+        state.animationId = 0;
+    }
+
+    state.running = false;
+    if (state.animation) {
+        state.animation->reset();
+    }
+}
+
+bool ensureAnimatedSticker(const std::string &gifUrl, const std::string &cacheKey) {
+    if (gifUrl.empty() || cacheKey.empty()) {
+        return false;
+    }
+
+    auto existing = sticker_gif_cache.find(cacheKey);
+    if (existing != sticker_gif_cache.end()) {
+        return existing->second.animation != nullptr;
+    }
+
+    if (sticker_gif_pending.find(cacheKey) != sticker_gif_pending.end()) {
+        return false;
+    }
+
+    sticker_gif_pending.insert(cacheKey);
+
+    Images::loadImageAsync(gifUrl, [gifUrl, cacheKey](Fl_RGB_Image *image) {
+        auto clearPending = [&]() { sticker_gif_pending.erase(cacheKey); };
+
+        if (!image) {
+            clearPending();
+            return;
+        }
+
+        std::string gifPath = Images::getCacheFilePath(gifUrl, "gif");
+        if (!std::filesystem::exists(gifPath)) {
+            clearPending();
+            return;
+        }
+
+        auto animation = std::make_unique<GifAnimation>(gifPath, GifAnimation::ScalingStrategy::Lazy);
+        if (!animation || !animation->isValid()) {
+            clearPending();
+            return;
+        }
+
+        AnimatedMediaState state;
+        state.animation = std::move(animation);
+        state.animation->reset();
+        sticker_gif_cache[cacheKey] = std::move(state);
+        Images::evictFromMemory(gifUrl);
+        clearPending();
+        Fl::redraw();
+    });
+
+    return false;
+}
+
+std::unordered_map<std::string, std::unique_ptr<Fl_RGB_Image>> sticker_cache;
+std::unordered_set<std::string> sticker_pending;
 std::unordered_map<std::string, std::unique_ptr<Fl_RGB_Image>> attachment_cache;
 std::unordered_set<std::string> attachment_pending;
 std::unordered_map<std::string, std::unique_ptr<Fl_RGB_Image>> emoji_cache;
@@ -345,6 +599,10 @@ std::string getAttachmentUrl(const Attachment &attachment) {
 
 std::string buildAttachmentCacheKey(const std::string &url, int width, int height, bool squareCrop) {
     return url + "#" + std::to_string(width) + "x" + std::to_string(height) + (squareCrop ? "#square" : "#fit");
+}
+
+std::string buildStickerCacheKey(const std::string &url, int width, int height) {
+    return url + "#" + std::to_string(width) + "x" + std::to_string(height);
 }
 
 Fl_RGB_Image *cropAndScaleToSquare(Fl_RGB_Image *source, int size) {
@@ -460,6 +718,35 @@ Fl_RGB_Image *getAttachmentImage(const Attachment &attachment, int width, int he
                 }
             }
             attachment_pending.erase(cacheKey);
+            Fl::redraw();
+        });
+    }
+
+    return nullptr;
+}
+
+Fl_RGB_Image *getStickerImage(const std::string &url, int width, int height) {
+    if (url.empty() || width <= 0 || height <= 0) {
+        return nullptr;
+    }
+
+    std::string cacheKey = buildStickerCacheKey(url, width, height);
+    auto it = sticker_cache.find(cacheKey);
+    if (it != sticker_cache.end()) {
+        return it->second.get();
+    }
+
+    if (sticker_pending.find(cacheKey) == sticker_pending.end()) {
+        sticker_pending.insert(cacheKey);
+        Images::loadImageAsync(url, [cacheKey, url, width, height](Fl_RGB_Image *image) {
+            if (image && image->w() > 0 && image->h() > 0) {
+                Fl_Image *scaled = image->copy(width, height);
+                if (scaled) {
+                    sticker_cache[cacheKey] = std::unique_ptr<Fl_RGB_Image>(static_cast<Fl_RGB_Image *>(scaled));
+                    Images::evictFromMemory(url);
+                }
+            }
+            sticker_pending.erase(cacheKey);
             Fl::redraw();
         });
     }
@@ -697,6 +984,60 @@ std::vector<MessageWidget::InlineItem> tokenizeStyledText(const std::string &tex
     }
 
     flushCurrent();
+    return tokens;
+}
+
+std::vector<MessageWidget::InlineItem> tokenizeLiteralText(const std::string &text, Fl_Font font, int size, Fl_Color color,
+                                                           bool preserveWhitespace, bool isCodeBlock) {
+    std::vector<MessageWidget::InlineItem> tokens;
+    std::string current;
+    bool currentWhitespace = false;
+
+    auto flushCurrent = [&]() {
+        if (current.empty()) {
+            return;
+        }
+        MessageWidget::InlineItem item;
+        item.kind = MessageWidget::InlineItem::Kind::Text;
+        item.text = current;
+        item.font = font;
+        item.size = size;
+        item.color = color;
+        item.preserveWhitespace = preserveWhitespace;
+        item.isCodeBlock = isCodeBlock;
+        tokens.push_back(std::move(item));
+        current.clear();
+    };
+
+    for (char ch : text) {
+        if (ch == '\r') {
+            continue;
+        }
+        if (ch == '\n') {
+            flushCurrent();
+            MessageWidget::InlineItem item;
+            item.kind = MessageWidget::InlineItem::Kind::LineBreak;
+            item.font = font;
+            item.size = size;
+            item.color = color;
+            item.preserveWhitespace = preserveWhitespace;
+            item.isCodeBlock = isCodeBlock;
+            tokens.push_back(std::move(item));
+            currentWhitespace = false;
+        } else {
+            if (preserveWhitespace) {
+                bool isWs = (ch == ' ' || ch == '\t');
+                if (!current.empty() && isWs != currentWhitespace) {
+                    flushCurrent();
+                }
+                currentWhitespace = isWs;
+            }
+            current.push_back(ch);
+        }
+    }
+
+    flushCurrent();
+
     return tokens;
 }
 
@@ -1263,21 +1604,68 @@ std::vector<MessageWidget::InlineItem> tokenizeEmojiText(const std::string &text
             continue;
         }
 
-        current.push_back(text[i]);
-        i += 1;
+        std::string unicodeEmoji;
+        if (EmojiManager::tryMatch(text, i, length, unicodeEmoji)) {
+            flushText();
+            MessageWidget::InlineItem item;
+            item.kind = MessageWidget::InlineItem::Kind::Emoji;
+            item.text = unicodeEmoji;
+            item.emojiSize = kEmojiSize;
+            item.width = kEmojiSize;
+            item.emojiCacheKey = EmojiManager::makeCacheKey(unicodeEmoji, kEmojiSize);
+            tokens.push_back(std::move(item));
+            i += length;
+            continue;
+        }
+
+        size_t charLen = utf8CharLength(static_cast<unsigned char>(text[i]));
+        if (i + charLen > text.size()) {
+            charLen = text.size() - i;
+        }
+        current.append(text, i, charLen);
+        i += charLen;
     }
 
     flushText();
     return tokens;
 }
 
-int drawInlineItem(const MessageWidget::InlineItem &item, int x, int baseline, bool useMuted) {
+int drawInlineItem(const MessageWidget::InlineItem &item, int x, int baseline, int lineHeight, int lineAscent, bool useMuted) {
     if (item.kind == MessageWidget::InlineItem::Kind::Emoji) {
         int size = item.emojiSize > 0 ? item.emojiSize : kEmojiSize;
-        int drawY = baseline - size + kEmojiBaselineOffset;
-        Fl_RGB_Image *emoji = getEmojiImage(item.emojiUrl, size);
-        if (emoji && emoji->w() > 0 && emoji->h() > 0) {
-            emoji->draw(x, drawY);
+        int lineTop = baseline - lineAscent;
+        int drawY = lineTop + (lineHeight - size) / 2;
+
+        if (!item.emojiUrl.empty()) {
+            std::string cacheKey =
+                item.emojiCacheKey.empty() ? buildEmojiCacheKey(item.emojiUrl, size) : item.emojiCacheKey;
+            if (isGifUrl(item.emojiUrl)) {
+                if (ensureAnimatedEmoji(item.emojiUrl, size)) {
+                    startEmojiAnimation(cacheKey);
+                }
+
+                auto it = emoji_gif_cache.find(cacheKey);
+                if (it != emoji_gif_cache.end() && it->second.animation) {
+                    if (auto *frame = it->second.animation->getScaledFrame(size, size)) {
+                        frame->draw(x, drawY);
+                        return size;
+                    }
+                }
+            }
+
+            Fl_RGB_Image *emoji = getEmojiImage(item.emojiUrl, size);
+            if (emoji && emoji->w() > 0 && emoji->h() > 0) {
+                emoji->draw(x, drawY);
+            }
+        } else if (!item.text.empty()) {
+            Fl_Image *emoji = EmojiManager::loadEmoji(item.text, size);
+            if (emoji && emoji->w() > 0 && emoji->h() > 0) {
+                emoji->draw(x, drawY);
+            } else {
+                fl_color(useMuted ? ThemeColors::TEXT_MUTED : ThemeColors::TEXT_NORMAL);
+                fl_font(FontLoader::Fonts::INTER_REGULAR, item.size > 0 ? item.size : kContentFontSize);
+                fl_draw(item.text.c_str(), x, baseline);
+            }
         }
         return size;
     }
@@ -1367,14 +1755,88 @@ std::vector<MessageWidget::InlineItem> buildSystemTokens(const std::string &temp
 std::vector<MessageWidget::InlineItem> tokenizeTextWithMessage(const std::string &text, Fl_Font font, int size,
                                                                Fl_Color color, const Message *msg) {
     std::vector<MessageWidget::InlineItem> tokens;
-    auto runs = parseLinkRuns(text, color, ThemeColors::TEXT_LINK);
-    auto mdRuns = parseMarkdownRuns(runs);
-    for (const auto &mdRun : mdRuns) {
-        Fl_Font runFont = resolveMarkdownFont(font, mdRun.bold, mdRun.italic);
-        auto runTokens = tokenizeEmojiText(mdRun.text, runFont, size, mdRun.color, mdRun.linkUrl, mdRun.underline,
-                                           mdRun.strikethrough, msg);
-        tokens.insert(tokens.end(), runTokens.begin(), runTokens.end());
+
+    auto appendMarkdownSegment = [&](const std::string &segment) {
+        size_t lineStart = 0;
+        while (lineStart <= segment.size()) {
+            size_t lineEnd = segment.find('\n', lineStart);
+            bool hasNewline = (lineEnd != std::string::npos);
+            std::string line = hasNewline ? segment.substr(lineStart, lineEnd - lineStart) : segment.substr(lineStart);
+
+            int lineSize = size;
+            Fl_Font lineBaseFont = font;
+
+            if (line.rfind("### ", 0) == 0) {
+                line = line.substr(4);
+                lineSize = size + 2;
+                lineBaseFont = FontLoader::Fonts::INTER_BOLD;
+            } else if (line.rfind("## ", 0) == 0) {
+                line = line.substr(3);
+                lineSize = size + 4;
+                lineBaseFont = FontLoader::Fonts::INTER_BOLD;
+            } else if (line.rfind("# ", 0) == 0) {
+                line = line.substr(2);
+                lineSize = size + 6;
+                lineBaseFont = FontLoader::Fonts::INTER_BOLD;
+            }
+
+            auto runs = parseLinkRuns(line, color, ThemeColors::TEXT_LINK);
+            auto mdRuns = parseMarkdownRuns(runs);
+            for (const auto &mdRun : mdRuns) {
+                Fl_Font runFont = resolveMarkdownFont(lineBaseFont, mdRun.bold, mdRun.italic);
+                auto runTokens = tokenizeEmojiText(mdRun.text, runFont, lineSize, mdRun.color, mdRun.linkUrl, mdRun.underline,
+                                                   mdRun.strikethrough, msg);
+                tokens.insert(tokens.end(), runTokens.begin(), runTokens.end());
+            }
+
+            if (hasNewline) {
+                MessageWidget::InlineItem br;
+                br.kind = MessageWidget::InlineItem::Kind::LineBreak;
+                br.font = font;
+                br.size = size;
+                br.color = color;
+                tokens.push_back(std::move(br));
+                lineStart = lineEnd + 1;
+            } else {
+                break;
+            }
+        }
+    };
+
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t fence = text.find("```", pos);
+        if (fence == std::string::npos) {
+            appendMarkdownSegment(text.substr(pos));
+            break;
+        }
+
+        if (fence > pos) {
+            appendMarkdownSegment(text.substr(pos, fence - pos));
+        }
+
+        size_t langStart = fence + 3;
+        size_t firstNewline = text.find('\n', langStart);
+        if (firstNewline == std::string::npos) {
+            appendMarkdownSegment(text.substr(fence));
+            break;
+        }
+
+        size_t codeStart = firstNewline + 1;
+        size_t close = text.find("```", codeStart);
+        if (close == std::string::npos) {
+            appendMarkdownSegment(text.substr(fence));
+            break;
+        }
+
+        std::string codeText = text.substr(codeStart, close - codeStart);
+        auto codeTokens =
+            tokenizeLiteralText(codeText, FL_COURIER_BOLD, std::max(10, size - 1), ThemeColors::TEXT_NORMAL, true, true);
+        tokens.insert(tokens.end(), codeTokens.begin(), codeTokens.end());
+
+        pos = close + 3;
     }
+
     return tokens;
 }
 } // namespace
@@ -1510,7 +1972,7 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
         int fontHeight = fl_height();
         int fontAscent = fontHeight - fl_descent();
 
-        layout.lines = wrapTokens(tokens, layout.contentWidth);
+        layout.lines = wrapTokens(tokens, layout.contentWidth, layout.contentWidth);
         layout.lineHeight = std::max(fontHeight, kSystemIconSize);
         layout.lineSpacing = kSystemLineSpacing;
         lineAscent = fontAscent;
@@ -1563,10 +2025,14 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
 
         if (emojiOnly && maxEmojiSize > 0) {
             for (auto &token : tokens) {
-                if (token.kind == InlineItem::Kind::Emoji && !token.emojiUrl.empty()) {
+                if (token.kind == InlineItem::Kind::Emoji) {
                     token.emojiSize = kEmojiOnlySize;
                     token.width = kEmojiOnlySize;
-                    token.emojiCacheKey = buildEmojiCacheKey(token.emojiUrl, kEmojiOnlySize);
+                    if (!token.emojiUrl.empty()) {
+                        token.emojiCacheKey = buildEmojiCacheKey(token.emojiUrl, kEmojiOnlySize);
+                    } else if (!token.text.empty()) {
+                        token.emojiCacheKey = EmojiManager::makeCacheKey(token.text, kEmojiOnlySize);
+                    }
                 }
             }
             maxEmojiSize = kEmojiOnlySize;
@@ -1579,9 +2045,20 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
             tokens.insert(tokens.end(), editedTokens.begin(), editedTokens.end());
         }
 
+        int maxTextSize = kContentFontSize;
+        for (const auto &token : tokens) {
+            if (token.kind == InlineItem::Kind::Text && token.size > maxTextSize) {
+                maxTextSize = token.size;
+            }
+        }
+
+        fl_font(FontLoader::Fonts::INTER_REGULAR, maxTextSize);
+        int maxFontHeight = fl_height();
         fl_font(FontLoader::Fonts::INTER_REGULAR, kContentFontSize);
-        layout.lines = wrapTokens(tokens, layout.contentWidth);
-        layout.lineHeight = fl_height();
+        int maxWidthByView = std::max(1, (layout.viewWidth * 3) / 4);
+        int codeBlockMaxWidth = std::min(layout.contentWidth, std::min(kCodeBlockMaxWidthPx, maxWidthByView));
+        layout.lines = wrapTokens(tokens, layout.contentWidth, codeBlockMaxWidth);
+        layout.lineHeight = std::max(fl_height(), maxFontHeight);
         layout.lineSpacing = kLineSpacing;
         lineAscent = layout.lineHeight - fl_descent();
 
@@ -1594,8 +2071,38 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
                 layout.lineHeight = std::max(layout.lineHeight, maxEmojiSize);
                 lineAscent = layout.lineHeight - fl_descent();
             }
-            int lineCount = layout.lines.empty() ? 1 : static_cast<int>(layout.lines.size());
-            contentHeight = lineCount * layout.lineHeight + (lineCount - 1) * layout.lineSpacing;
+            if (!layout.lines.empty()) {
+                size_t i = 0;
+                while (i < layout.lines.size()) {
+                    if (!layout.lines[i].isCodeBlock) {
+                        contentHeight += layout.lineHeight;
+                        if (i + 1 < layout.lines.size() && !layout.lines[i + 1].isCodeBlock) {
+                            contentHeight += layout.lineSpacing;
+                        }
+                        i += 1;
+                        continue;
+                    }
+
+                    size_t start = i;
+                    while (i < layout.lines.size() && layout.lines[i].isCodeBlock) {
+                        i += 1;
+                    }
+                    size_t count = i - start;
+
+                    if (start > 0) {
+                        contentHeight += kCodeBlockOuterPaddingY;
+                    }
+                    contentHeight += kCodeBlockPaddingY;
+                    contentHeight += static_cast<int>(count) * layout.lineHeight;
+                    if (count > 0) {
+                        contentHeight += static_cast<int>(count - 1) * kCodeBlockLineSpacing;
+                    }
+                    contentHeight += kCodeBlockPaddingY;
+                    if (i < layout.lines.size()) {
+                        contentHeight += kCodeBlockOuterPaddingY;
+                    }
+                }
+            }
         }
 
         if (isGrouped) {
@@ -1621,6 +2128,45 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
     layout.contentTop = contentTop;
     layout.contentHeight = contentHeight;
     int attachmentsBottomPadding = 0;
+
+    if (!layout.isSystem && !msg.stickers.empty()) {
+        int stickerSize = std::min(layout.contentWidth, kStickerMaxSize);
+        if (stickerSize > 0) {
+            int cursorY = 0;
+            layout.stickers.reserve(msg.stickers.size());
+
+            for (const auto &sticker : msg.stickers) {
+                StickerLayout stickerLayout;
+                stickerLayout.width = stickerSize;
+                stickerLayout.height = stickerSize;
+                stickerLayout.xOffset = 0;
+                stickerLayout.yOffset = cursorY;
+                stickerLayout.formatType = sticker.formatType;
+                stickerLayout.name = sticker.name;
+
+                if (!sticker.id.empty()) {
+                    stickerLayout.url = CDNUtils::getStickerUrl(sticker.id, sticker.formatType);
+                }
+
+                stickerLayout.supported = (!stickerLayout.url.empty() && stickerLayout.formatType != 3);
+
+                if (stickerLayout.supported && !stickerLayout.url.empty()) {
+                    stickerLayout.cacheKey = buildStickerCacheKey(stickerLayout.url, stickerLayout.width, stickerLayout.height);
+                }
+
+                layout.stickers.push_back(std::move(stickerLayout));
+                cursorY += stickerSize + kStickerSpacing;
+            }
+
+            if (!layout.stickers.empty()) {
+                if (cursorY > 0) {
+                    cursorY -= kStickerSpacing;
+                }
+                layout.stickersTopPadding = (layout.contentHeight > 0) ? kStickerTopPadding : kStickerTopPaddingNoContent;
+                layout.stickersHeight = layout.stickersTopPadding + cursorY;
+            }
+        }
+    }
 
     if (!layout.isSystem && !msg.attachments.empty()) {
         int maxWidth = std::min(layout.contentWidth, kAttachmentMaxWidth);
@@ -1745,7 +2291,7 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
                 cursorY -= kAttachmentSpacing;
             }
             layout.attachmentsTopPadding =
-                (layout.contentHeight > 0) ? kAttachmentTopPadding : kAttachmentTopPaddingNoContent;
+                (layout.contentHeight > 0 || layout.stickersHeight > 0) ? kAttachmentTopPadding : kAttachmentTopPaddingNoContent;
             layout.attachmentsHeight = layout.attachmentsTopPadding + cursorY;
             attachmentsBottomPadding = kContentBottomPadding;
         }
@@ -1777,9 +2323,15 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
                             buildEmojiCacheKey(reactionLayout.emojiUrl, reactionLayout.emojiSize);
                     }
                 } else {
-                    fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kReactionEmojiFontSize);
-                    if (!reactionLayout.emojiName.empty()) {
-                        emojiWidth = static_cast<int>(fl_width(reactionLayout.emojiName.c_str()));
+                    if (!reactionLayout.emojiName.empty() && EmojiManager::hasEmoji(reactionLayout.emojiName)) {
+                        emojiWidth = kReactionEmojiSize;
+                        reactionLayout.emojiCacheKey =
+                            EmojiManager::makeCacheKey(reactionLayout.emojiName, reactionLayout.emojiSize);
+                    } else {
+                        fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kReactionEmojiFontSize);
+                        if (!reactionLayout.emojiName.empty()) {
+                            emojiWidth = static_cast<int>(fl_width(reactionLayout.emojiName.c_str()));
+                        }
                     }
                 }
                 if (emojiWidth <= 0) {
@@ -1809,7 +2361,7 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
             }
 
             if (!layout.reactions.empty()) {
-                layout.reactionsTopPadding = (layout.contentHeight > 0 || layout.attachmentsHeight > 0)
+                layout.reactionsTopPadding = (layout.contentHeight > 0 || layout.stickersHeight > 0 || layout.attachmentsHeight > 0)
                                                  ? kReactionTopPadding
                                                  : kReactionTopPaddingNoContent;
                 layout.reactionsHeight =
@@ -1820,7 +2372,7 @@ MessageWidget::Layout MessageWidget::buildLayout(const Message &msg, int viewWid
 
     if (!layout.isSystem) {
         int contentBottom =
-            layout.contentTop + layout.contentHeight + layout.attachmentsHeight + layout.reactionsHeight;
+            layout.contentTop + layout.contentHeight + layout.stickersHeight + layout.attachmentsHeight + layout.reactionsHeight;
 
         int finalBottomPadding = bottomPadding;
         if (!layout.attachments.empty()) {
@@ -1851,11 +2403,13 @@ void MessageWidget::draw(const Message &msg, const Layout &layout, int originX, 
             }
         }
 
+        fl_font(FontLoader::Fonts::INTER_REGULAR, kSystemFontSize);
+        int sysAscent = fl_height() - fl_descent();
         int lineY = originY + layout.contentBaseline;
         for (const auto &line : layout.lines) {
             int cursorX = originX + layout.contentX;
             for (const auto &item : line.items) {
-                cursorX += drawInlineItem(item, cursorX, lineY, isPending);
+                cursorX += drawInlineItem(item, cursorX, lineY, layout.lineHeight, sysAscent, isPending);
             }
             lineY += layout.lineHeight + layout.lineSpacing;
         }
@@ -1963,22 +2517,145 @@ void MessageWidget::draw(const Message &msg, const Layout &layout, int originX, 
 
         int replyY = originY + layout.replyBaseline;
         int cursorX = originX + layout.replyX;
+        int replyAscent = layout.replyBaseline - layout.replyLineTop;
         for (const auto &item : layout.replyItems) {
-            cursorX += drawInlineItem(item, cursorX, replyY, isPending);
+            cursorX += drawInlineItem(item, cursorX, replyY, layout.replyHeight, replyAscent, isPending);
         }
     }
 
+    fl_font(FontLoader::Fonts::INTER_REGULAR, kContentFontSize);
+    int baseDescent = fl_descent();
+    int baseAscent = layout.lineHeight - baseDescent;
+
+    int maxWidthByView = std::max(1, (layout.viewWidth * 3) / 4);
+    int codeBlockMaxWidth = std::min(std::max(0, layout.contentWidth), std::min(kCodeBlockMaxWidthPx, maxWidthByView));
+
     int lineY = originY + layout.contentBaseline;
-    for (const auto &line : layout.lines) {
-        int cursorX = originX + layout.contentX;
-        for (const auto &item : line.items) {
-            cursorX += drawInlineItem(item, cursorX, lineY, isPending);
+    size_t lineIndex = 0;
+    while (lineIndex < layout.lines.size()) {
+        if (!layout.lines[lineIndex].isCodeBlock) {
+            const auto &line = layout.lines[lineIndex];
+            int cursorX = originX + layout.contentX;
+            for (const auto &item : line.items) {
+                cursorX += drawInlineItem(item, cursorX, lineY, layout.lineHeight, baseAscent, isPending);
+            }
+
+            lineY += layout.lineHeight + layout.lineSpacing;
+            lineIndex += 1;
+            continue;
         }
-        lineY += layout.lineHeight + layout.lineSpacing;
+
+        size_t start = lineIndex;
+        while (lineIndex < layout.lines.size() && layout.lines[lineIndex].isCodeBlock) {
+            lineIndex += 1;
+        }
+        size_t end = lineIndex;
+        size_t count = end - start;
+
+        if (start > 0) {
+            lineY += kCodeBlockOuterPaddingY;
+        }
+
+        int maxLineWidth = 0;
+        for (size_t i = start; i < end; ++i) {
+            maxLineWidth = std::max(maxLineWidth, layout.lines[i].width);
+        }
+
+        int boxW = std::min(codeBlockMaxWidth, maxLineWidth + 2 * kCodeBlockPaddingX);
+        boxW = std::max(1, boxW);
+        int boxX = originX + layout.contentX;
+
+        int firstLineBaseline = lineY + kCodeBlockPaddingY;
+        int boxY = firstLineBaseline - baseAscent - kCodeBlockPaddingY;
+        int textHeight = static_cast<int>(count) * layout.lineHeight;
+        if (count > 0) {
+            textHeight += static_cast<int>(count - 1) * kCodeBlockLineSpacing;
+        }
+        int boxH = textHeight + 2 * kCodeBlockPaddingY;
+
+        RoundedStyle::drawRoundedRect(boxX, boxY, boxW, boxH, kCodeBlockRadius, kCodeBlockRadius, kCodeBlockRadius, kCodeBlockRadius,
+                                      kCodeBlockBg);
+        RoundedStyle::drawRoundedOutline(boxX, boxY, boxW, boxH, kCodeBlockRadius, kCodeBlockRadius, kCodeBlockRadius,
+                                         kCodeBlockRadius, kCodeBlockBorder);
+
+        int baseline = firstLineBaseline;
+        for (size_t i = start; i < end; ++i) {
+            int cursorX = boxX + kCodeBlockPaddingX;
+            for (const auto &item : layout.lines[i].items) {
+                cursorX += drawInlineItem(item, cursorX, baseline, layout.lineHeight, baseAscent, isPending);
+            }
+            baseline += layout.lineHeight + kCodeBlockLineSpacing;
+        }
+
+        lineY = firstLineBaseline + textHeight + kCodeBlockPaddingY;
+        if (end < layout.lines.size()) {
+            lineY += kCodeBlockOuterPaddingY;
+        }
+    }
+
+    if (!layout.isSystem && !layout.stickers.empty() && !msg.stickers.empty()) {
+        int stickersTop = originY + layout.contentTop + layout.contentHeight + layout.stickersTopPadding;
+        size_t count = std::min(layout.stickers.size(), msg.stickers.size());
+
+        for (size_t i = 0; i < count; ++i) {
+            const auto &stickerLayout = layout.stickers[i];
+            int boxW = stickerLayout.width;
+            int boxH = stickerLayout.height;
+            int boxX = originX + layout.contentX + stickerLayout.xOffset;
+            int boxY = stickersTop + stickerLayout.yOffset;
+
+            bool canRender = stickerLayout.supported && !stickerLayout.url.empty();
+            if (canRender) {
+                if (isGifUrl(stickerLayout.url) && !stickerLayout.cacheKey.empty()) {
+                    if (ensureAnimatedSticker(stickerLayout.url, stickerLayout.cacheKey)) {
+                        startStickerAnimation(stickerLayout.cacheKey);
+                    }
+
+                    auto it = sticker_gif_cache.find(stickerLayout.cacheKey);
+                    if (it != sticker_gif_cache.end() && it->second.animation) {
+                        if (auto *frame = it->second.animation->getScaledFrame(boxW, boxH)) {
+                            frame->draw(boxX, boxY);
+                            continue;
+                        }
+                    }
+                }
+
+                Fl_RGB_Image *image = getStickerImage(stickerLayout.url, boxW, boxH);
+                if (image && image->w() > 0 && image->h() > 0) {
+                    image->draw(boxX, boxY);
+                    continue;
+                }
+            }
+
+            RoundedStyle::drawRoundedRect(boxX, boxY, boxW, boxH, kAttachmentCornerRadius, kAttachmentCornerRadius,
+                                          kAttachmentCornerRadius, kAttachmentCornerRadius, ThemeColors::BG_SECONDARY);
+            RoundedStyle::drawRoundedOutline(boxX, boxY, boxW, boxH, kAttachmentCornerRadius, kAttachmentCornerRadius,
+                                             kAttachmentCornerRadius, kAttachmentCornerRadius,
+                                             ThemeColors::BG_MODIFIER_ACCENT);
+
+            int iconSize = std::min(48, std::max(16, boxW / 3));
+            auto *icon = IconManager::load_recolored_icon("sticker", iconSize, ThemeColors::TEXT_MUTED);
+            if (icon && icon->w() > 0 && icon->h() > 0) {
+                int iconX = boxX + (boxW - iconSize) / 2;
+                int iconY = boxY + (boxH - iconSize) / 2 - 10;
+                icon->draw(iconX, iconY);
+            }
+
+            std::string label = stickerLayout.name.empty() ? "Sticker" : stickerLayout.name;
+            fl_color(ThemeColors::TEXT_MUTED);
+            fl_font(FontLoader::Fonts::INTER_SEMIBOLD, 12);
+            int textMaxWidth = std::max(0, boxW - 16);
+            label = ellipsizeText(label, textMaxWidth, FontLoader::Fonts::INTER_SEMIBOLD, 12);
+            int textW = static_cast<int>(fl_width(label.c_str()));
+            int textX = boxX + (boxW - textW) / 2;
+            int textY = boxY + boxH - 12;
+            fl_draw(label.c_str(), textX, textY);
+        }
     }
 
     if (!layout.isSystem && !layout.attachments.empty() && !msg.attachments.empty()) {
-        int attachmentsTop = originY + layout.contentTop + layout.contentHeight + layout.attachmentsTopPadding;
+        int attachmentsTop =
+            originY + layout.contentTop + layout.contentHeight + layout.stickersHeight + layout.attachmentsTopPadding;
         size_t count = std::min(layout.attachments.size(), msg.attachments.size());
 
         for (size_t i = 0; i < count; ++i) {
@@ -2089,7 +2766,8 @@ void MessageWidget::draw(const Message &msg, const Layout &layout, int originX, 
 
     if (!layout.isSystem && !layout.reactions.empty()) {
         int reactionsTop =
-            originY + layout.contentTop + layout.contentHeight + layout.attachmentsHeight + layout.reactionsTopPadding;
+            originY + layout.contentTop + layout.contentHeight + layout.stickersHeight + layout.attachmentsHeight +
+            layout.reactionsTopPadding;
 
         for (const auto &reactionLayout : layout.reactions) {
             int boxX = originX + layout.contentX + reactionLayout.xOffset;
@@ -2111,20 +2789,49 @@ void MessageWidget::draw(const Message &msg, const Layout &layout, int originX, 
             int textX = emojiX + reactionLayout.emojiWidth + kReactionEmojiGap;
 
             if (reactionLayout.isCustomEmoji && !reactionLayout.emojiUrl.empty()) {
-                Fl_RGB_Image *emoji = getEmojiImage(reactionLayout.emojiUrl, reactionLayout.emojiSize);
-                if (emoji && emoji->w() > 0 && emoji->h() > 0) {
-                    emoji->draw(emojiX, emojiY);
-                } else if (!reactionLayout.emojiName.empty()) {
+                bool drewEmoji = false;
+                if (isGifUrl(reactionLayout.emojiUrl) && !reactionLayout.emojiCacheKey.empty()) {
+                    if (ensureAnimatedEmoji(reactionLayout.emojiUrl, reactionLayout.emojiSize)) {
+                        startEmojiAnimation(reactionLayout.emojiCacheKey);
+                    }
+
+                    auto it = emoji_gif_cache.find(reactionLayout.emojiCacheKey);
+                    if (it != emoji_gif_cache.end() && it->second.animation) {
+                        if (auto *frame = it->second.animation->getScaledFrame(reactionLayout.emojiSize, reactionLayout.emojiSize)) {
+                            frame->draw(emojiX, emojiY);
+                            drewEmoji = true;
+                        }
+                    }
+                }
+
+                if (!drewEmoji) {
+                    Fl_RGB_Image *emoji = getEmojiImage(reactionLayout.emojiUrl, reactionLayout.emojiSize);
+                    if (emoji && emoji->w() > 0 && emoji->h() > 0) {
+                        emoji->draw(emojiX, emojiY);
+                        drewEmoji = true;
+                    }
+                }
+
+                if (!drewEmoji && !reactionLayout.emojiName.empty()) {
                     fl_color(kReactionTextColor);
                     fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kReactionEmojiFontSize);
                     int emojiBaseline = boxY + (reactionLayout.height + fl_height()) / 2 - fl_descent();
                     fl_draw(reactionLayout.emojiName.c_str(), emojiX, emojiBaseline);
                 }
             } else if (!reactionLayout.emojiName.empty()) {
-                fl_color(kReactionTextColor);
-                fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kReactionEmojiFontSize);
-                int emojiBaseline = boxY + (reactionLayout.height + fl_height()) / 2 - fl_descent();
-                fl_draw(reactionLayout.emojiName.c_str(), emojiX, emojiBaseline);
+                bool drewEmoji = false;
+                Fl_Image *emoji = EmojiManager::loadEmoji(reactionLayout.emojiName, reactionLayout.emojiSize);
+                if (emoji && emoji->w() > 0 && emoji->h() > 0) {
+                    emoji->draw(emojiX, emojiY);
+                    drewEmoji = true;
+                }
+
+                if (!drewEmoji) {
+                    fl_color(kReactionTextColor);
+                    fl_font(FontLoader::Fonts::INTER_SEMIBOLD, kReactionEmojiFontSize);
+                    int emojiBaseline = boxY + (reactionLayout.height + fl_height()) / 2 - fl_descent();
+                    fl_draw(reactionLayout.emojiName.c_str(), emojiX, emojiBaseline);
+                }
             }
 
             if (!reactionLayout.countText.empty()) {
@@ -2198,6 +2905,42 @@ void MessageWidget::pruneAnimatedAvatarCache(const std::unordered_set<std::strin
     }
 }
 
+void MessageWidget::pruneAnimatedEmojiCache(const std::unordered_set<std::string> &keepKeys) {
+    for (auto it = emoji_gif_cache.begin(); it != emoji_gif_cache.end();) {
+        if (keepKeys.find(it->first) == keepKeys.end()) {
+            stopEmojiAnimation(it->first);
+            it = emoji_gif_cache.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void MessageWidget::pruneStickerCache(const std::unordered_set<std::string> &keepKeys) {
+    for (auto it = sticker_cache.begin(); it != sticker_cache.end();) {
+        if (keepKeys.find(it->first) == keepKeys.end()) {
+            size_t split = it->first.find('#');
+            if (split != std::string::npos) {
+                Images::evictFromMemory(it->first.substr(0, split));
+            }
+            it = sticker_cache.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void MessageWidget::pruneAnimatedStickerCache(const std::unordered_set<std::string> &keepKeys) {
+    for (auto it = sticker_gif_cache.begin(); it != sticker_gif_cache.end();) {
+        if (keepKeys.find(it->first) == keepKeys.end()) {
+            stopStickerAnimation(it->first);
+            it = sticker_gif_cache.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
 void MessageWidget::pruneAttachmentCache(const std::unordered_set<std::string> &keepKeys) {
     for (auto it = attachment_cache.begin(); it != attachment_cache.end();) {
         if (keepKeys.find(it->first) == keepKeys.end()) {
@@ -2233,13 +2976,15 @@ std::vector<MessageWidget::InlineItem> MessageWidget::tokenizeText(const std::st
 
 std::vector<MessageWidget::LayoutLine> MessageWidget::wrapText(const std::string &text, int maxWidth) {
     auto tokens = tokenizeText(text, FontLoader::Fonts::INTER_REGULAR, kContentFontSize, ThemeColors::TEXT_NORMAL);
-    return wrapTokens(tokens, maxWidth);
+    return wrapTokens(tokens, maxWidth, maxWidth);
 }
 
-std::vector<MessageWidget::LayoutLine> MessageWidget::wrapTokens(const std::vector<InlineItem> &tokens, int maxWidth) {
+std::vector<MessageWidget::LayoutLine> MessageWidget::wrapTokens(const std::vector<InlineItem> &tokens, int maxWidth,
+                                                                 int codeBlockMaxWidth) {
     std::vector<LayoutLine> lines;
     LayoutLine currentLine;
     int currentWidth = 0;
+    bool currentLineCodeBlock = false;
 
     if (maxWidth <= 0) {
         lines.push_back(currentLine);
@@ -2248,9 +2993,11 @@ std::vector<MessageWidget::LayoutLine> MessageWidget::wrapTokens(const std::vect
 
     auto pushLine = [&]() {
         currentLine.width = currentWidth;
+        currentLine.isCodeBlock = currentLineCodeBlock;
         lines.push_back(currentLine);
         currentLine = LayoutLine{};
         currentWidth = 0;
+        currentLineCodeBlock = false;
     };
 
     auto trimLeadingWhitespace = [](const std::string &str) -> std::string {
@@ -2261,10 +3008,68 @@ std::vector<MessageWidget::LayoutLine> MessageWidget::wrapTokens(const std::vect
         return str.substr(start);
     };
 
+    auto trimWrappedCodeWhitespace = [&](InlineItem &token) {
+        if (!token.isCodeBlock || token.kind != InlineItem::Kind::Text || token.text.empty()) {
+            return;
+        }
+        size_t start = 0;
+        while (start < token.text.size() && (token.text[start] == ' ' || token.text[start] == '\t')) {
+            start++;
+        }
+        if (start == 0) {
+            return;
+        }
+        token.text.erase(0, start);
+        if (token.text.empty()) {
+            token.width = 0;
+            return;
+        }
+        fl_font(token.font, token.size);
+        token.width = static_cast<int>(fl_width(token.text.c_str()));
+    };
+
+    auto isWhitespaceToken = [](const InlineItem &token) -> bool {
+        if (token.kind != InlineItem::Kind::Text || token.text.empty()) {
+            return false;
+        }
+        for (char ch : token.text) {
+            if (ch != ' ' && ch != '\t') {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    auto trimTrailingWhitespaceTokens = [&]() {
+        while (!currentLine.items.empty() && isWhitespaceToken(currentLine.items.back())) {
+            currentWidth -= std::max(0, currentLine.items.back().width);
+            currentLine.items.pop_back();
+        }
+        if (currentWidth < 0) {
+            currentWidth = 0;
+        }
+    };
+
     for (auto token : tokens) {
         if (token.kind == InlineItem::Kind::LineBreak) {
+            currentLineCodeBlock = currentLineCodeBlock || token.isCodeBlock;
             pushLine();
+            currentLineCodeBlock = token.isCodeBlock;
             continue;
+        }
+
+        if (token.isCodeBlock && !currentLineCodeBlock && !currentLine.items.empty()) {
+            pushLine();
+        }
+        if (!token.isCodeBlock && currentLineCodeBlock && !currentLine.items.empty()) {
+            pushLine();
+        }
+        currentLineCodeBlock = currentLineCodeBlock || token.isCodeBlock;
+
+        int effectiveMaxWidth = maxWidth;
+        if (currentLineCodeBlock) {
+            int containerWidth = std::max(1, std::min(maxWidth, codeBlockMaxWidth));
+            effectiveMaxWidth = std::max(1, containerWidth - 2 * kCodeBlockPaddingX);
         }
 
         if (token.kind == InlineItem::Kind::Emoji) {
@@ -2272,8 +3077,22 @@ std::vector<MessageWidget::LayoutLine> MessageWidget::wrapTokens(const std::vect
                 token.width = token.emojiSize > 0 ? token.emojiSize : kEmojiSize;
             }
 
-            if (currentWidth + token.width > maxWidth && !currentLine.items.empty()) {
+            if (currentWidth + token.width > effectiveMaxWidth && !currentLine.items.empty()) {
+                if (currentLineCodeBlock) {
+                    trimTrailingWhitespaceTokens();
+                }
                 pushLine();
+                currentLineCodeBlock = token.isCodeBlock;
+                trimWrappedCodeWhitespace(token);
+                if (token.kind == InlineItem::Kind::Text && token.text.empty()) {
+                    continue;
+                }
+                if (currentLineCodeBlock) {
+                    int containerWidth = std::max(1, std::min(maxWidth, codeBlockMaxWidth));
+                    effectiveMaxWidth = std::max(1, containerWidth - 2 * kCodeBlockPaddingX);
+                } else {
+                    effectiveMaxWidth = maxWidth;
+                }
             }
 
             currentLine.items.push_back(token);
@@ -2282,7 +3101,7 @@ std::vector<MessageWidget::LayoutLine> MessageWidget::wrapTokens(const std::vect
         }
 
         if (token.kind == InlineItem::Kind::Text) {
-            if (currentLine.items.empty() && !token.text.empty()) {
+            if (currentLine.items.empty() && !token.text.empty() && !token.preserveWhitespace) {
                 std::string trimmed = trimLeadingWhitespace(token.text);
                 if (trimmed.empty()) {
                     continue;
@@ -2297,21 +3116,31 @@ std::vector<MessageWidget::LayoutLine> MessageWidget::wrapTokens(const std::vect
 
         fl_font(token.font, token.size);
         token.width = static_cast<int>(fl_width(token.text.c_str()));
-        if (token.width > maxWidth && token.text != " ") {
-            auto splitTokens = splitLongToken(token, maxWidth);
+        if (token.width > effectiveMaxWidth && token.text != " ") {
+            auto splitTokens = splitLongToken(token, effectiveMaxWidth);
             for (auto part : splitTokens) {
-                if (currentWidth + part.width > maxWidth && !currentLine.items.empty()) {
+                if (currentWidth + part.width > effectiveMaxWidth && !currentLine.items.empty()) {
+                    if (currentLineCodeBlock) {
+                        trimTrailingWhitespaceTokens();
+                    }
                     pushLine();
-                }
-                if (currentLine.items.empty() && part.kind == InlineItem::Kind::Text) {
-                    std::string trimmed = trimLeadingWhitespace(part.text);
-                    if (trimmed.empty()) {
+                    currentLineCodeBlock = part.isCodeBlock;
+                    trimWrappedCodeWhitespace(part);
+                    if (part.kind == InlineItem::Kind::Text && part.text.empty()) {
                         continue;
                     }
-                    if (trimmed != part.text) {
-                        part.text = trimmed;
-                        fl_font(part.font, part.size);
-                        part.width = static_cast<int>(fl_width(part.text.c_str()));
+                }
+                if (currentLine.items.empty() && part.kind == InlineItem::Kind::Text) {
+                    if (!part.preserveWhitespace) {
+                        std::string trimmed = trimLeadingWhitespace(part.text);
+                        if (trimmed.empty()) {
+                            continue;
+                        }
+                        if (trimmed != part.text) {
+                            part.text = trimmed;
+                            fl_font(part.font, part.size);
+                            part.width = static_cast<int>(fl_width(part.text.c_str()));
+                        }
                     }
                 }
                 currentLine.items.push_back(part);
@@ -2320,21 +3149,36 @@ std::vector<MessageWidget::LayoutLine> MessageWidget::wrapTokens(const std::vect
             continue;
         }
 
-        if (token.text == " " && currentLine.items.empty()) {
+        if (token.text == " " && currentLine.items.empty() && !token.preserveWhitespace) {
             continue;
         }
 
-        if (currentWidth + token.width > maxWidth && !currentLine.items.empty()) {
-            pushLine();
-            if (token.kind == InlineItem::Kind::Text) {
-                std::string trimmed = trimLeadingWhitespace(token.text);
-                if (trimmed.empty()) {
+        if (currentWidth + token.width > effectiveMaxWidth && !currentLine.items.empty()) {
+            if (currentLineCodeBlock) {
+                trimTrailingWhitespaceTokens();
+                if (currentWidth + token.width <= effectiveMaxWidth) {
+                    currentLine.items.push_back(token);
+                    currentWidth += token.width;
                     continue;
                 }
-                if (trimmed != token.text) {
-                    token.text = trimmed;
-                    fl_font(token.font, token.size);
-                    token.width = static_cast<int>(fl_width(token.text.c_str()));
+            }
+            pushLine();
+            currentLineCodeBlock = token.isCodeBlock;
+            trimWrappedCodeWhitespace(token);
+            if (token.kind == InlineItem::Kind::Text && token.text.empty()) {
+                continue;
+            }
+            if (token.kind == InlineItem::Kind::Text) {
+                if (!token.preserveWhitespace) {
+                    std::string trimmed = trimLeadingWhitespace(token.text);
+                    if (trimmed.empty()) {
+                        continue;
+                    }
+                    if (trimmed != token.text) {
+                        token.text = trimmed;
+                        fl_font(token.font, token.size);
+                        token.width = static_cast<int>(fl_width(token.text.c_str()));
+                    }
                 }
             }
         }
@@ -2344,6 +3188,7 @@ std::vector<MessageWidget::LayoutLine> MessageWidget::wrapTokens(const std::vect
     }
 
     currentLine.width = currentWidth;
+    currentLine.isCodeBlock = currentLineCodeBlock;
     lines.push_back(currentLine);
     return lines;
 }
@@ -2372,6 +3217,8 @@ std::vector<MessageWidget::InlineItem> MessageWidget::splitLongToken(const Inlin
             part.isLink = token.isLink;
             part.underline = token.underline;
             part.strikethrough = token.strikethrough;
+            part.preserveWhitespace = token.preserveWhitespace;
+            part.isCodeBlock = token.isCodeBlock;
             parts.push_back(std::move(part));
             current.clear();
             current.push_back(ch);
@@ -2393,6 +3240,8 @@ std::vector<MessageWidget::InlineItem> MessageWidget::splitLongToken(const Inlin
         part.isLink = token.isLink;
         part.underline = token.underline;
         part.strikethrough = token.strikethrough;
+        part.preserveWhitespace = token.preserveWhitespace;
+        part.isCodeBlock = token.isCodeBlock;
         parts.push_back(std::move(part));
     }
 
